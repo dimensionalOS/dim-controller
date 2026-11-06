@@ -176,6 +176,9 @@ export class NamedLocations {
         if (!location) {
             return Promise.reject(new Error(`no location named “${name}”`))
         }
+        if (!location.position.every(Number.isFinite)) {
+            return Promise.reject(new Error(`“${name}” has no position to go to`))
+        }
         this.connection.command(GOAL_KEY)
         this.connection.command(POSE_GOAL_KEY)
         return this.#put(GOAL_KEY, goalBytes(location)).then(() => this.#put(POSE_GOAL_KEY, poseGoalBytes(location)))

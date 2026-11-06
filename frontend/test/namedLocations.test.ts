@@ -166,3 +166,12 @@ Deno.test("Go to's PoseStamped faces a location's chosen heading; identity (olde
     assertEquals(at([0, 0, Math.SQRT1_2, Math.SQRT1_2]), { x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 })
     assertEquals([hasHeading([0, 0, 0, -1]), hasHeading([0, 0, 1, 0])], [false, true])
 })
+
+Deno.test("go to never sends a goal that isn't finite", async () => {
+    const fake = fakeConnection()
+    const named = new NamedLocations(fake.connection)
+    fake.deliver(listBytes([{ label: "void", frame_id: "premap", position: [NaN, 0, 0], orientation: [0, 0, 0, 1] }], rev(1)))
+    let failed = false
+    await named.goTo("void").catch(() => (failed = true))
+    assertEquals([failed, fake.sent.length], [true, 0])
+})
