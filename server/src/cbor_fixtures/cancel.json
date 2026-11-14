@@ -1,0 +1,1 @@
+{"__class__":"ExecutionResult","coordinator_result":null,"message":"","status":{"__class__":"ExecutionStatus","name":"COMPLETED","value":5},"trajectory_status":{"__class__":"TrajectoryStatus","error":"","progress":1.0,"state":{"__class__":"TrajectoryState","name":"COMPLETED","value":2},"time_elapsed":1.9999989373203086,"time_remaining":0.0,"timestamp":1791963658.8820522}}

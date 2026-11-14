@@ -1,6 +1,6 @@
 //! viser's manipulation workflow for the arm mode's 3D view: target, Plan, Preview, Execute, Cancel, Clear, through
 //! dimos's ManipulationModule. Its RPCs are zenoh queries on `dimos/rpc/ManipulationModule/<method>` whose payload is
-//! a pickled `(args, kwargs)` and whose reply is pickled too (pickle.rs). The plan last made is kept here so Execute
+//! `(args, kwargs)` in dimos's CBOR and whose reply is CBOR too (cbor.rs). The plan last made is kept here so Execute
 //! runs exactly that plan, and Preview / a new plan / a new target reach every open page as events.
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use zenoh::query::QueryTarget;
 
-use crate::pickle::{self, Out};
+use crate::cbor::{self, Out};
 use crate::recorder;
 
 /// The module whose RPCs these are; its instance name in the blueprint.
@@ -55,15 +55,15 @@ impl Manipulation {
         let session = self.recorder.session().await?;
         let replies = session
             .get(format!("dimos/rpc/{MODULE}/{method}"))
-            .payload(pickle::rpc_request(args, kwargs))
+            .payload(cbor::rpc_request(args, kwargs))
             .target(QueryTarget::All)
             .timeout(timeout)
             .await
             .map_err(|error| anyhow!("zenoh: {error}"))?;
         match first_answer(&replies).await {
-            Some(Ok(bytes)) => Ok(pickle::to_json(&pickle::loads(&bytes)?)),
+            Some(Ok(bytes)) => cbor::decode(&bytes).map_err(|error| anyhow!("{MODULE}.{method}'s reply: {error}")),
             Some(Err(bytes)) => {
-                let detail = pickle::loads(&bytes).map(|value| rpc_error(&pickle::to_json(&value)));
+                let detail = cbor::decode(&bytes).map(|value| rpc_error(&value));
                 bail!("{MODULE}.{method} failed: {}", detail.unwrap_or_else(|_| "an error it couldn't describe".into()))
             }
             None => bail!("no {MODULE} answered {method} (is a manipulation blueprint running?)"),
@@ -143,7 +143,7 @@ impl Manipulation {
                         .iter()
                         .map(|name| joints.get(name).and_then(Value::as_f64).ok_or_else(|| anyhow!("no target for {group}'s {name}")))
                         .collect::<Result<Vec<_>>>()?;
-                    goals.push((group.clone(), pickle::joint_state(&names, &positions, ts)));
+                    goals.push((group.clone(), cbor::joint_state(&names, &positions, ts)));
                 }
                 self.call("plan_to_joints", vec![Out::Dict(goals)], speed_kwargs(speed), PLAN_TIMEOUT).await?
             }
@@ -172,7 +172,7 @@ impl Manipulation {
             .map(|(group, pose)| {
                 let position: [f64; 3] = serde_json::from_value(pose["position"].clone()).map_err(|_| anyhow!("{group}'s pose.position is [x, y, z]"))?;
                 let orientation: [f64; 4] = serde_json::from_value(pose["orientation"].clone()).map_err(|_| anyhow!("{group}'s pose.orientation is [x, y, z, w]"))?;
-                Ok((group.clone(), pickle::pose_stamped(pose["frame"].as_str().unwrap_or("world"), position, orientation, ts)))
+                Ok((group.clone(), cbor::pose_stamped(pose["frame"].as_str().unwrap_or("world"), position, orientation, ts)))
             })
             .collect::<Result<Vec<_>>>()?;
         self.call("plan_to_poses", vec![Out::Dict(goals)], speed_kwargs(speed), PLAN_TIMEOUT).await
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn summarizes_a_real_plan() {
-        let bytes = std::fs::read(format!("{}/src/pickle_fixtures/plan_to_joints.pkl", env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let result = pickle::to_json(&pickle::loads(&bytes).unwrap());
+        let bytes = std::fs::read(format!("{}/src/cbor_fixtures/plan_to_joints.cbor", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let result = cbor::decode(&bytes).unwrap();
         let plan = summarize(&result, &["manipulator".to_string()], "joint", &json!({}));
         assert_eq!(plan["id"], "84a9de8e36c04ece99efcd5d7716bf88");
         let positions = plan["positions"].as_array().unwrap();

@@ -40,7 +40,7 @@ pub struct Api {
     pub annotations: Arc<Annotations>,
     pub settings: Arc<Settings>,
     pub drive: Arc<Drive>,
-    /// the arm's planner (dimos's ManipulationModule, over its pickled zenoh RPCs)
+    /// the arm's planner (dimos's ManipulationModule, over its zenoh RPCs, whose payloads are dimos's CBOR)
     pub manipulation: Arc<Manipulation>,
     /// Desktop's own HTTP API (DIMOS_APP's `desktopUrl`): the running dimos's log dirs
     pub desktop_url: Arc<String>,

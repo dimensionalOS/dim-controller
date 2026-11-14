@@ -1,0 +1,59 @@
+{
+    "OperationStatus": {
+        "IDLE": 1,
+        "PLANNING": 2,
+        "HAS_PLAN": 3,
+        "EXECUTING": 4
+    },
+    "PlanStatus": {
+        "SUCCEEDED": 1,
+        "FAILED": 2,
+        "INVALID_TARGET": 3,
+        "AMBIGUOUS_GROUP": 4,
+        "NO_MOTION": 5
+    },
+    "ExecutionStatus": {
+        "IDLE": 1,
+        "ACCEPTED": 2,
+        "REJECTED": 3,
+        "EXECUTING": 4,
+        "COMPLETED": 5,
+        "ABORTED": 6,
+        "FAULT": 7,
+        "TIMED_OUT": 8,
+        "NO_PLAN": 9,
+        "NO_EXECUTION": 10,
+        "UNCERTAIN": 11
+    },
+    "CommandStatus": {
+        "SUCCEEDED": 1,
+        "REJECTED": 2,
+        "FAILED": 3
+    },
+    "PlanningStatus": {
+        "SUCCESS": 1,
+        "NO_SOLUTION": 2,
+        "TIMEOUT": 3,
+        "INVALID_START": 4,
+        "INVALID_GOAL": 5,
+        "COLLISION_AT_START": 6,
+        "COLLISION_AT_GOAL": 7,
+        "UNSUPPORTED": 8
+    },
+    "TrajectoryState": {
+        "IDLE": 0,
+        "EXECUTING": 1,
+        "COMPLETED": 2,
+        "ABORTED": 3,
+        "FAULT": 4
+    },
+    "TrajectoryExecutionStatus": {
+        "ACCEPTED": 1,
+        "NO_TRAJECTORY_TASK": 2,
+        "INVALID_TRAJECTORY": 3,
+        "START_STATE_UNAVAILABLE": 4,
+        "START_STATE_MISMATCH": 5,
+        "ALREADY_EXECUTING": 6,
+        "ESTOPPED": 7
+    }
+}
