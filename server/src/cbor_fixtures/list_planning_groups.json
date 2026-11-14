@@ -1,0 +1,1 @@
+[{"__class__":"PlanningGroupInfo","base_frame":"link_base","has_gripper":true,"id":"manipulator","joint_names":["joint1","joint2","joint3","joint4","joint5","joint6","joint7"],"tip_frame":"link_tcp"}]

@@ -1,0 +1,1 @@
+{"__class__":"ExecutionResult","coordinator_result":{"__class__":"TrajectoryExecutionResult","message":"","status":{"__class__":"TrajectoryExecutionStatus","name":"ACCEPTED","value":1}},"message":"","status":{"__class__":"ExecutionStatus","name":"ACCEPTED","value":2},"trajectory_status":null}
