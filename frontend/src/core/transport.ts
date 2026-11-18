@@ -6,6 +6,7 @@ import { getZenoh } from "dimos-react/dim-app/zenoh.js"
 import { Store } from "./store.ts"
 import { NetHistory, wireCounts, type WireCounts } from "./netHistory.ts"
 import { LeaseKeeper, type LeaseClient } from "./lease.ts"
+import { namespacedClient, namespacedTopics, seenNamespaces } from "./namespace.ts"
 import { applyOverride, bandwidthOverrides, defaultBandwidthPriority, isVideoOptions, localLinkBandwidth, optionDiff, type StreamOverride, withChanges } from "./bandwidth.ts"
 
 export { Priority }
@@ -52,7 +53,10 @@ export const dimosKey = (topic: string, type: string) => `dimos/${topic.replace(
 
 export interface ConnectionState {
     state: "connecting" | "connected" | "degraded" | "lost"
+    /** the topics this page sees (a robot namespace's by their plain names: core/namespace.ts) */
     topics: Topic[]
+    /** the robot namespaces on the bus (Settings → Namespace picks one) */
+    namespaces: string[]
     droppedPerSecond: number
     rttMs: number | null
     /** bytes per second reaching this page over the wire (the WebRTC transport's received bytes), else the gateway's own count; null before the first sample */
@@ -119,7 +123,7 @@ const LEASE_RETRY_TICKS = 3
 
 export class Connection {
     client: ZenohGateway | null = null
-    readonly status = new Store<ConnectionState>({ state: "connecting", topics: [], droppedPerSecond: 0, rttMs: null, throughputBytesPerSec: null, error: null })
+    readonly status = new Store<ConnectionState>({ state: "connecting", topics: [], namespaces: [], droppedPerSecond: 0, rttMs: null, throughputBytesPerSec: null, error: null })
     #subscriptions = new Set<LiveSubscription>()
     #lastDropped = 0
     /** the gateway stats poll the drop rates were last taken from, and when (polls come every 1-10 s on a thin link) */
@@ -183,7 +187,8 @@ export class Connection {
     }
 
     async start() {
-        const client = (await this.#shared.ready).client as unknown as ZenohGateway
+        // every dimos key the page uses goes into the robot namespace, when one is picked
+        const client = namespacedClient((await this.#shared.ready).client as unknown as ZenohGateway)
         this.client = client
         this.status.update({ state: "connected", error: null })
         client.onState((state) => this.status.update({ state }))
@@ -223,10 +228,12 @@ export class Connection {
         for (;;) {
             try {
                 const found = await client.listTopics("dimos/**", { probeMs: 800 })
-                const topics = rememberTopics(lastSeen, found.map((topic) => parseKey(topic.key)).filter((topic): topic is Topic => topic !== null), Date.now())
-                const before = this.status.get().topics
-                if (topics.length !== before.length || topics.some((topic, index) => topic.key !== before[index].key)) {
-                    this.status.update({ topics })
+                const seen = rememberTopics(lastSeen, found.map((topic) => parseKey(topic.key)).filter((topic): topic is Topic => topic !== null), Date.now())
+                const topics = namespacedTopics(seen)
+                const namespaces = seenNamespaces(seen)
+                const before = this.status.get()
+                if (topics.length !== before.topics.length || topics.some((topic, index) => topic.key !== before.topics[index].key) || namespaces.join() !== before.namespaces.join()) {
+                    this.status.update({ topics, namespaces })
                 }
             } catch {
                 // the gateway is reconnecting; the next round tries again

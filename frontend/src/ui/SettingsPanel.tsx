@@ -25,11 +25,13 @@ import { MESH_STYLES, type MeshStyle } from "../core/render/meshStyle.ts"
 import { Stepper } from "./Stepper.tsx"
 import { RESUBSCRIBE_MS, STALL_MS } from "../core/video.ts"
 import { MESH_RETRY_MS } from "../core/urdfSource.ts"
+import { activeNamespace, chooseNamespace } from "../core/namespace.ts"
 
 export function SettingsPanel({ app }: { app: ViewerApp }) {
     const robot = useStore(app.robot)
     return (
         <div className="settings-panel app-settings">
+            <NamespaceGroup app={app} />
             {robot.type !== "arm" && (
                 <>
                     <DrivePanel app={app} />
@@ -54,6 +56,29 @@ export function SettingsPanel({ app }: { app: ViewerApp }) {
                 <SettingsLink icon="upload" label="Load layout…" note={`or drop a ${LAYOUT_SUFFIX} file anywhere`} onClick={pickLayoutFile} />
             </SettingsGroup>
         </div>
+    )
+}
+
+/**
+ * Which robot this page views and drives when a blueprint runs several (each its own namespace: core/namespace.ts):
+ * only while there's a namespace on the bus or one is picked. Picking reloads this page under it.
+ */
+function NamespaceGroup({ app }: { app: ViewerApp }) {
+    const { namespaces } = useStore(app.connection.status)
+    const active = activeNamespace()
+    if (!namespaces.length && !active) {
+        return null
+    }
+    const options: [string, string][] = [["", "none: every topic"], ...namespaces.map((name) => [name, name] as [string, string])]
+    if (active && !namespaces.includes(active)) {
+        options.push([active, `${active} (not on the bus now)`])
+    }
+    return (
+        <SettingsGroup title="Robot">
+            <Field inline className="set-row" label="Namespace" title="a blueprint with several robots puts each under its own namespace (its topics and TF frames): pick one to view and drive just that robot. This page only; it reloads">
+                <Select size="sm" value={active} onChange={(name: string) => name !== active && chooseNamespace(name)} options={options} data-testid="namespace-select" />
+            </Field>
+        </SettingsGroup>
     )
 }
 

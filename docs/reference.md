@@ -106,6 +106,13 @@ One arrangement, made of panels:
   which floats the Logs panel), the gamepad's state, Record, the shortcut list and STOP. A healthy link shows nothing: the
   Status panel has the link, round trip, drops, what's running, the drive and the render rates.
 
+Settings → Robot → Namespace picks one robot when a blueprint runs several, each under its own dimos namespace
+(`Blueprint.namespace("robot1")`, nested ones too: `fleet/robot1`): the list is the namespaces seen on the bus. The page
+then works as if the namespace weren't there: it sees that robot's topics by their plain names, then its enclosing
+namespaces' and the global ones (dimos's own order), never another robot's; what it publishes (cmd_vel, goals) goes
+into the namespace, and TF frames lose the prefix coming in and get it back going out. It's this page's choice (this
+browser's, or the link's `?namespace=fleet/robot1`), so two windows can drive two robots; picking one reloads the page.
+
 The Logs panel (closed until asked for: the Logs chip, or Settings) follows the running blueprint's dimos log (the
 dimos gateway's `history/{runId}/logs`, read again on its `log` event), its tools in one row: a Filter button (its popover picks the group: one logger, picked from the list or
 typed as part of its name, and the detail, the lowest level), a search and follow. Each record is one line until clicked. While it shows, the Logs chip has nothing to count.
