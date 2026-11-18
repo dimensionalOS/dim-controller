@@ -2,12 +2,16 @@
 // the recording if one runs; with dimos's NamedLocations module running, a named location sent to it) or rename or
 // remove the label under the cursor. A right-drag still pans: only a right click that
 // barely moved opens it (a long press on touch). "Go here" publishes clicked_point: it sends the spot to the nav stack (one message).
+// "Go here, facing…" aims first: an arrow from the spot follows the cursor (a drag on touch), and a click sends the spot and
+// that yaw as a PoseStamped on /goal (core/goalPose.ts); Esc or a right click drops it. "Cancel goal" stops the one under way.
 import { useEffect, useRef, useState } from "react"
-import type * as THREE from "three"
+import * as THREE from "three"
 import type { ViewerApp } from "../core/app.ts"
 import type { LocationLabel } from "../core/labels.ts"
 import { recorder } from "../core/recorder.ts"
 import { clickedPoint } from "../core/clickedPoint.ts"
+import { cancelGoal, goalPose } from "../core/goalPose.ts"
+import { GoalAim, yawToward } from "../core/render/goalAim.ts"
 import { createRightClickTip, narrate, RIGHT_CLICK_TIP_TEXT } from "../core/rightClickTip.ts"
 import { Button, Card, TextInput } from "dimos-react"
 
@@ -22,11 +26,14 @@ interface Menu {
 }
 
 const fmt = (value: number) => value.toFixed(2)
+const degrees = (yaw: number) => Math.round(THREE.MathUtils.radToDeg(yaw))
 
 export function SceneMenu({ app }: { app: ViewerApp }) {
     const [menu, setMenu] = useState<Menu | null>(null)
     const [text, setText] = useState("")
     const [note, setNote] = useState<string | null>(null)
+    /** "Go here, facing…" aiming from this spot */
+    const [aiming, setAiming] = useState<{ point: THREE.Vector3; yaw: number } | null>(null)
     const box = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
@@ -136,27 +143,98 @@ export function SceneMenu({ app }: { app: ViewerApp }) {
         }
     }
 
-    const publishClickedPoint = async (point: THREE.Vector3) => {
-        setMenu(null)
+    /** Puts each message (a command: the drive lease covers it), then notes `done`, or what went wrong with `what`. */
+    const publish = async (what: string, messages: { key: string; bytes: Uint8Array }[], done: string) => {
         const client = app.connection.client
         if (!client || client.state === "lost") {
-            setNote("Couldn't publish clicked_point: not connected to the gateway")
+            setNote(`Couldn't ${what}: not connected to the gateway`)
             return
         }
-        const frame = app.viewer.fixedFrame
-        const { key, bytes } = clickedPoint(point, frame)
-        app.connection.command(key)
         try {
-            await client.put(key, bytes)
-            setNote(`Published clicked_point ${fmt(point.x)}, ${fmt(point.y)}, ${fmt(point.z)} (${frame})`)
+            for (const { key, bytes } of messages) {
+                app.connection.command(key)
+                await client.put(key, bytes)
+            }
+            setNote(done)
         } catch (error) {
-            setNote(`Couldn't publish clicked_point: ${error instanceof Error ? error.message : error}`)
+            setNote(`Couldn't ${what}: ${error instanceof Error ? error.message : error}`)
         }
     }
 
+    const publishClickedPoint = (point: THREE.Vector3) => {
+        setMenu(null)
+        const frame = app.viewer.fixedFrame
+        publish("publish clicked_point", [clickedPoint(point, frame)], `Published clicked_point ${fmt(point.x)}, ${fmt(point.y)}, ${fmt(point.z)} (${frame})`)
+    }
+
+    const sendCancel = () => {
+        setMenu(null)
+        setAiming(null)
+        publish("cancel the goal", cancelGoal(app.viewer.fixedFrame), "Goal cancelled")
+    }
+
+    // aiming: the arrow follows the cursor; a press (mouse or touch) aims and is the page's alone (no orbit), its release sends
+    useEffect(() => {
+        if (!aiming) {
+            return
+        }
+        const { point } = aiming
+        const arrow = new GoalAim(app.viewer)
+        let yaw = aiming.yaw
+        let pressed: number | null = null
+        arrow.show(point, yaw)
+        const onCanvas = (event: Event) => event.target === app.viewer.canvas
+        const aim = (event: PointerEvent) => {
+            yaw = yawToward(app.viewer, point, event.clientX, event.clientY) ?? yaw
+            arrow.show(point, yaw)
+        }
+        const onMove = (event: PointerEvent) => {
+            if (pressed === null || event.pointerId === pressed) {
+                aim(event)
+            }
+        }
+        const onDown = (event: PointerEvent) => {
+            if (!onCanvas(event)) {
+                return
+            }
+            event.stopImmediatePropagation()
+            event.preventDefault()
+            if (event.button === 2) {
+                setAiming(null)
+                return
+            }
+            pressed = event.pointerId
+            aim(event)
+        }
+        const onUp = (event: PointerEvent) => {
+            if (event.pointerId !== pressed) {
+                return
+            }
+            event.stopImmediatePropagation()
+            setAiming(null)
+            const frame = app.viewer.fixedFrame
+            publish("send the goal", [goalPose(point, yaw, frame)], `Goal sent: ${fmt(point.x)}, ${fmt(point.y)} facing ${degrees(yaw)}° (${frame})`)
+        }
+        const onKey = (event: KeyboardEvent) => event.key === "Escape" && setAiming(null)
+        const onContext = (event: MouseEvent) => onCanvas(event) && event.preventDefault()
+        addEventListener("pointermove", onMove, true)
+        addEventListener("pointerdown", onDown, true)
+        addEventListener("pointerup", onUp, true)
+        addEventListener("keydown", onKey)
+        addEventListener("contextmenu", onContext, true)
+        return () => {
+            removeEventListener("pointermove", onMove, true)
+            removeEventListener("pointerdown", onDown, true)
+            removeEventListener("pointerup", onUp, true)
+            removeEventListener("keydown", onKey)
+            removeEventListener("contextmenu", onContext, true)
+            arrow.dispose()
+        }
+    }, [aiming, app])
+
     // keep the menu on screen
     const left = menu ? Math.min(menu.x, innerWidth - 250) : 0
-    const top = menu ? Math.min(menu.y, innerHeight - 175) : 0
+    const top = menu ? Math.min(menu.y, innerHeight - 235) : 0
     return (
         <>
             {menu && (
@@ -183,6 +261,15 @@ export function SceneMenu({ app }: { app: ViewerApp }) {
                             <button type="button" role="menuitem" className="scene-menu-item" disabled={!menu.point} onClick={() => publishClickedPoint(menu.point!)} data-testid="scene-menu-go-here">
                                 Go here
                             </button>
+                            <button type="button" role="menuitem" className="scene-menu-item" disabled={!menu.point} onClick={(event) => {
+                                setMenu(null)
+                                setAiming({ point: menu.point!, yaw: yawToward(app.viewer, menu.point!, event.clientX, event.clientY) ?? 0 })
+                            }} data-testid="scene-menu-go-facing">
+                                Go here, facing…
+                            </button>
+                            <button type="button" role="menuitem" className="scene-menu-item" onClick={sendCancel} data-testid="scene-menu-cancel-goal">
+                                Cancel goal
+                            </button>
                             <button type="button" role="menuitem" className="scene-menu-item" disabled={!menu.point} onClick={() => setMenu({ ...menu, editing: "new" })} data-testid="scene-menu-label">
                                 Label this location…
                             </button>
@@ -203,7 +290,8 @@ export function SceneMenu({ app }: { app: ViewerApp }) {
                     )}
                 </Card>
             )}
-            {note && <Card padded={false} className="scene-note" data-testid="scene-note">{note}</Card>}
+            {aiming && <Card padded={false} className="scene-note" data-testid="scene-aim-note">Point the arrow, then click to send · Esc cancels</Card>}
+            {!aiming && note && <Card padded={false} className="scene-note" data-testid="scene-note">{note}</Card>}
         </>
     )
 }
