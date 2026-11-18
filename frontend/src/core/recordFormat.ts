@@ -33,10 +33,13 @@ export function inRecordingsFolder(directory: string, root: string | null): bool
     return directory === trimmed || directory.startsWith(`${trimmed}/`)
 }
 
+/** Why Record can't start with nothing running (the button's title, the palette's note). */
+export const NOTHING_TO_RECORD = "Nothing to record: launch a blueprint first"
 
 /**
  * The Record toggle's state, the bar's and the phone HUD's alike: recording (and for how long), the short text, and
  * whether it can be pressed (not while starting / stopping, not with the recorder down, not with nothing to record).
+ * `idle`: nothing is running (core/runs.ts nothingRunning), so a new recording would be empty.
  */
 export function recordToggleState(input: {
     active: boolean
@@ -45,8 +48,9 @@ export function recordToggleState(input: {
     recordNew: boolean
     selected: number
     seconds: number
+    idle: boolean
 }): { recording: boolean; text: string; disabled: boolean } {
-    const { active, pending, unavailable, recordNew, selected, seconds } = input
+    const { active, pending, unavailable, recordNew, selected, seconds, idle } = input
     const text = pending === "start" ? "Starting…" : pending === "stop" ? "Stopping…" : active ? formatClock(seconds) : "REC"
-    return { recording: active, text, disabled: pending !== null || !!unavailable || (!active && !recordNew && selected === 0) }
+    return { recording: active, text, disabled: pending !== null || !!unavailable || (!active && (idle || (!recordNew && selected === 0))) }
 }

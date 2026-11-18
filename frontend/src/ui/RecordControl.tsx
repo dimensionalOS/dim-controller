@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "react"
 import type { ViewerApp } from "../core/app.ts"
 import { persistentStore, useStore } from "../core/store.ts"
 import { recorder, type Compression, type ImageFormat, type StreamRate } from "../core/recorder.ts"
-import { biggestStreams, formatBytes, formatClock, formatRate, inRecordingsFolder, isRecorded, isRpcTopic, recordToggleState, TOP_STREAMS } from "../core/recordFormat.ts"
+import { biggestStreams, formatBytes, formatClock, formatRate, inRecordingsFolder, isRecorded, isRpcTopic, NOTHING_TO_RECORD, recordToggleState, TOP_STREAMS } from "../core/recordFormat.ts"
+import { nothingRunning } from "../core/runs.ts"
 import type { Topic } from "../core/transport.ts"
 import { Alert, Badge, Button, Card, Checkbox, Field, Heading, Label, NumberInput, Select, Text, TextInput, Toggle } from "dimos-react"
 import { Icon } from "./icons.tsx"
@@ -35,6 +36,8 @@ export function RecordControl({ app }: { app: ViewerApp }) {
     const active = status.recording.active
     const selected = topics.filter((topic) => isRecorded(topic.key, chosen))
     const busy = pending.action !== null
+    const runs = useStore(app.runs.state)
+    const idle = nothingRunning(runs, topics)
 
     // a hash link (#record, as other apps open it with) opens the options
     useEffect(() => {
@@ -66,10 +69,10 @@ export function RecordControl({ app }: { app: ViewerApp }) {
                         variant={active ? "danger" : "default"}
                         className={`record-toggle ${active ? "recording" : ""} ${busy ? "pending" : ""}`}
                         pressed={active}
-                        title={status.unavailable ?? (error ? `${label}: ${error}` : label)}
+                        title={status.unavailable ?? (!active && idle ? NOTHING_TO_RECORD : error ? `${label}: ${error}` : label)}
                         aria-label={label}
                         // with new streams joining, a recording can start before anything is on the bus: they join as they appear
-                        disabled={recordToggleState({ active, pending: pending.action, unavailable: status.unavailable, recordNew: status.options.recordNew, selected: selected.length, seconds: status.recording.seconds }).disabled}
+                        disabled={recordToggleState({ active, pending: pending.action, unavailable: status.unavailable, recordNew: status.options.recordNew, selected: selected.length, seconds: status.recording.seconds, idle }).disabled}
                         onClick={toggle}
                     >
                         <span className="record-dot" />

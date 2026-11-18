@@ -4,6 +4,8 @@
 import type { ViewerApp } from "../core/app.ts"
 import { useStore } from "../core/store.ts"
 import { recorder } from "../core/recorder.ts"
+import { NOTHING_TO_RECORD } from "../core/recordFormat.ts"
+import { nothingRunning } from "../core/runs.ts"
 import { cameraTabs } from "../core/cameraChoice.ts"
 import { profiles } from "../profile/index.ts"
 import { type Command, panelCommands, panelTitle } from "./commands.ts"
@@ -27,6 +29,7 @@ export function useCommands(app: ViewerApp, api: WorkspaceApi, cameras: CameraAc
     const recording = useStore(recorder.status)
     const view = useStore(app.settings)
     const connection = useStore(app.connection.status)
+    const runs = useStore(app.runs.state)
     const arm = app.profile.type === "arm"
     const focused = api.view.hide.length === 2
     const offered = useStore(dockActions)
@@ -103,7 +106,7 @@ export function useCommands(app: ViewerApp, api: WorkspaceApi, cameras: CameraAc
             id: "record.toggle",
             label: recording.recording.active ? "Stop recording" : "Start recording",
             group: "Record",
-            blocked: recording.unavailable ?? undefined,
+            blocked: recording.unavailable ?? (!recording.recording.active && nothingRunning(runs, connection.topics) ? NOTHING_TO_RECORD : undefined),
             words: "mcap capture",
             run: () => void toggleRecording(app).catch(() => {}),
         },

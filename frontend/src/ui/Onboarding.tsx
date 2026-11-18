@@ -7,6 +7,7 @@ import type { ViewerApp } from "../core/app.ts"
 import { useStore } from "../core/store.ts"
 import { appInstalled, type EmptyStateOptions, openApp, underDesktop } from "dimos-react/dim-app/desktop.js"
 import { takesVelocity } from "../core/cmdvel.ts"
+import { nothingRunning } from "../core/runs.ts"
 
 const LAUNCH_DRIVABLE = { stream: "cmd_vel" }
 const LAUNCH_ARM = { stream: "joint_command" }
@@ -160,13 +161,12 @@ export function useOnboarding(app: ViewerApp): Onboarding {
             },
         }
     }
-    // nothing the Launcher started, but robot data is flowing: a blueprint run from a terminal (dimos run / dtk run)
-    const outside = runs.running.length === 0 && connection.topics.some((topic) => !/^\/rpc\b|^\/dimos\//.test(topic.name))
-    if (runs.running.length === 0 && !outside && noBlueprintDismissed) {
+    const nothing = nothingRunning(runs, connection.topics)
+    if (nothing && noBlueprintDismissed) {
         // dismissed: the 3D view shows whatever topics exist; there's nothing to drive, so no key guide
         return { message: null, blocksDriving: true, reason: isArm ? "no arm blueprint is running" : "no blueprint with a cmd_vel input is running", launch }
     }
-    if (runs.running.length === 0 && !outside) {
+    if (nothing) {
         return {
             blocksDriving: true,
             reason: isArm ? "no arm blueprint is running" : "no blueprint with a cmd_vel input is running",
