@@ -1,6 +1,7 @@
 // The one bar's status chips (ui/barStatus.ts says when and what): the link's live throughput and latency (coloured
 // when it's a problem; quiet, low contrast, when it isn't), TF and render warnings (each opens what fixes it), the
-// battery (quiet when it's fine), the robot computer's CPU (only when it's really high) and the gamepad's state. A
+// battery (quiet when it's fine), the robot computer's CPU (only when it's really high), the dimos log's unseen
+// warnings and errors (a click floats the Logs panel) and the gamepad's state. A
 // phone shows the same chips in a row under its top buttons.
 import type { ViewerApp } from "../core/app.ts"
 import { useStore } from "../core/store.ts"
@@ -18,6 +19,8 @@ import { batteryChip, batteryReadings } from "../core/batteryFeed.ts"
 import { slowestVideo, type VideoLatency } from "../core/videoLatency.ts"
 import { maxLatencyOf } from "../core/linkWatch.ts"
 import { navStatus } from "../core/navStatusFeed.ts"
+import { logFeed, unseenProblems } from "../core/logFeed.ts"
+import { floatBoxFor, locate } from "./workspace.ts"
 
 /** The robot's battery (every BatteryState topic; core/batteryFeed.ts), Go2-app style: the outline filled to the charge, a bolt while charging. */
 export function BatteryChip() {
@@ -82,6 +85,36 @@ function CpuChip() {
     )
 }
 
+/** The running blueprint's warnings and errors no one has seen in the Logs panel (core/logFeed.ts): only when there are
+ * some. Fixed width (the count in a fixed slot), so the chips beside it don't move; a click floats the Logs panel (a
+ * phone, one panel at a time: makes it the one). */
+export function LogsChip({ api }: { api: WorkspaceApi }) {
+    useEffect(() => logFeed.start(), [])
+    const { records, seen, running } = useStore(logFeed.state)
+    if (!running) {
+        return null
+    }
+    const { warnings, errors } = unseenProblems(records, seen)
+    const count = warnings + errors
+    if (!count) {
+        return null
+    }
+    const open = () => {
+        if (api.mobile || locate(api.arrangement, "logs")) {
+            api.act("logs", "show")
+        } else {
+            api.place("logs", { zone: "float", box: floatBoxFor(api.arrangement, "logs", api.layout) })
+        }
+    }
+    const parts = [errors && `${errors} error${errors === 1 ? "" : "s"}`, warnings && `${warnings} warning${warnings === 1 ? "" : "s"}`].filter(Boolean).join(", ")
+    return (
+        <button type="button" className={`bar-chip tone-${errors ? "bad" : "warn"} bar-button bar-logs`} title={`dimos log: ${parts} since the Logs panel last showed (open it)`} data-testid="bar-logs" onClick={open}>
+            <Icon name="logs" size={13} />
+            <span className="bar-value bar-logs-value">Logs <span className="bar-num bar-num-logs">{count > 999 ? "999+" : count}</span></span>
+        </button>
+    )
+}
+
 /** The link's throughput and latency averaged over a few seconds and redrawn once a second, so the chip is readable; driving's latency gate still uses the raw round trip. */
 function useSmoothedLink(app: ViewerApp): { rate: number | null; latency: number | null; video: VideoLatency | null } {
     const average = useRef<{ rate: number | null; latency: number | null }>({ rate: null, latency: null })
@@ -129,7 +162,7 @@ export function LinkChip({ app }: { app: ViewerApp }) {
     )
 }
 
-/** The chips that show only when they matter: the lease, TF trouble, the splat fallback, the battery, a busy CPU, the gamepad. */
+/** The chips that show only when they matter: the lease, TF trouble, the splat fallback, the battery, a busy CPU, log problems, the gamepad. */
 export function StatusChips({ app, api, battery = true, gamepad = true }: { app: ViewerApp; api: WorkspaceApi; battery?: boolean; gamepad?: boolean }) {
     const { issues: tfIssues } = useStore(app.tfIssues)
     const fallback = useStore(splatFallback)
@@ -157,6 +190,7 @@ export function StatusChips({ app, api, battery = true, gamepad = true }: { app:
             <NavStatusChip />
             {battery && <BatteryChip />}
             <CpuChip />
+            <LogsChip api={api} />
             {gamepad && pad && (
                 <span className={`bar-chip tone-${pad.tone} bar-gamepad`} title={`Gamepad · ${pad.detail}`} data-testid="bar-gamepad">
                     <Icon name="gamepad" size={14} />

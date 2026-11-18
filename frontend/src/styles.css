@@ -31,6 +31,8 @@ html[data-dr-square] .dr-thumbstick-base, html[data-dr-square] .dr-thumbstick-kn
 body, body.dr-body { background: var(--bg); font-family: var(--hud, var(--sans)); font-feature-settings: "cv11", "ss01"; font-size: 13px; line-height: 1.45; overscroll-behavior: none; }
 /* the panels are dense: compact the theme's form controls */
 .dr-input, .dr-select { padding: 4px 8px; font-size: 12px; min-width: 0; }
+/* a search box keeps room for its magnifier (the padding above would put the text over it) */
+.dr-input.dr-input--with-icon { padding-left: 30px; }
 .dr-select { padding-right: 28px; }
 .dr-number.number { width: 72px; }
 h3.dr-h3 { display: block; margin: 14px 0 6px; }
@@ -842,6 +844,9 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 .bar-num { display: inline-block; text-align: right; }
 .bar-num-rate { width: 5ch; }
 .bar-num-ms { width: 4ch; }
+/* the Logs chip (ui/BarChips.tsx): one width whatever the count */
+.bar-logs-value { display: inline-flex; gap: 1ch; max-width: none; font-variant-numeric: tabular-nums; }
+.bar-num-logs { width: 4ch; text-align: left; }
 .bar-unit { margin-left: 1ch; }
 .bar-sep { margin: 0 1ch; }
 /* a phone: smaller, the spaces narrower */
@@ -1275,3 +1280,12 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 .boot-shell { position: fixed; inset: 0; background: var(--bg); }
 .boot-shell-stage { position: absolute; inset: 0 0 var(--lv-bar-h) 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, var(--text)); }
 .boot-shell-hint { font-size: 12px; opacity: 0.7; }
+
+/* the Logs panel (ui/LogsPanel.tsx): the log fills the body, its tools and group row above it */
+.panel-content.logs-body { display: flex; min-height: 0; padding: 6px 8px 8px; }
+.logs-panel { flex: 1; min-width: 0; }
+.logs-panel .dr-slog__tools { flex-wrap: wrap; }
+.logs-panel .dr-slog__level { width: 150px; }
+.logs-group-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.logs-group { flex: 1; min-width: 0; }
+.logs-count { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-fg); font: 11px var(--mono); }

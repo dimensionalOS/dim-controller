@@ -21,6 +21,8 @@ const OWN_ICON_PATHS: Record<string, string> = {
     more: "M5 12h.01 M12 12h.01 M19 12h.01",
     // a robot arm: base, two links, an open gripper
     arm: "M4 21h8 M8 21v-4 M8 17l4-7 M12 10l6-3 M18 7l3-2 M18 7l2 3",
+    // lines of text, ragged (the Logs panel)
+    logs: "M4 6h16 M4 10h11 M4 14h16 M4 18h8",
     // a line chart on its axes (a Plot panel)
     plot: "M3 3v18h18 M7 15l4-5 3 3 5-7",
     "fit-map": "M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13z M15.5 15.5 20 20 M8 8.5h5v4H8z",

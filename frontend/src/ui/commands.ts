@@ -95,5 +95,5 @@ export function panelTitle(id: string): string {
     if (isPlot(id)) {
         return `Plot ${id.split(":")[1]}`
     }
-    return ({ map: "Map", scene: "3D view", status: "Status", settings: "Settings", arms: "Arms", tf: "Transforms (TF)" } as Record<string, string>)[id] ?? id
+    return ({ map: "Map", scene: "3D view", status: "Status", settings: "Settings", arms: "Arms", tf: "Transforms (TF)", logs: "Logs" } as Record<string, string>)[id] ?? id
 }

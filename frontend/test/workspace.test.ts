@@ -59,19 +59,20 @@ Deno.test("open: the camera is the main view, map and 3D on the left, settings o
     assertEquals(arrangement.right, ["settings", "tf"])
     assertEquals(arrangement.collapsed.sort(), ["tf"])
     assertEquals(arrangement.floating, [])
-    assertEquals(arrangement.closed, [])
+    // Logs waits to be asked for (the bar's Logs chip, Settings)
+    assertEquals(arrangement.closed, ["logs"])
 })
 
 Deno.test("close and reopen: a fixed panel is remembered closed, a camera or plot just leaves; show and place reopen", () => {
     const closed = closePanel(opened(), "map")
     assertEquals(locate(closed, "map"), null)
-    assertEquals(closed.closed, ["map"])
+    assertEquals(closed.closed, ["logs", "map"])
     // it stays closed across a reload's normalizing
     assertEquals(locate(normalizeArrangement(closed, IDS), "map"), null)
     const shownAgain = showPanel(closed, "map")
-    assertEquals([locate(shownAgain, "map")?.zone, shownAgain.closed], ["left", []])
+    assertEquals([locate(shownAgain, "map")?.zone, shownAgain.closed], ["left", ["logs"]])
     const camera = closePanel(opened(), "camera:1")
-    assertEquals([camera.stage, camera.closed], [null, []])
+    assertEquals([camera.stage, camera.closed], [null, ["logs"]])
     // placed into an empty side: an uneven split, the side takes SPLIT_SHARE of the width
     const empty = defaultArrangement(IDS)
     const placed = placePanel(empty, "scene", { zone: "right", index: 0 }, 1440)
@@ -97,8 +98,8 @@ Deno.test("a saved arrangement is made safe: each panel once, unknown ones dropp
     assertEquals(arrangement.stage, "map")
     assertEquals(arrangement.left, ["camera:1", "scene"])
     assertEquals(arrangement.floating.map((box) => box.id), ["tf"])
-    // a camera is never "closed" (it leaves its list instead), junk is dropped
-    assertEquals(arrangement.closed, [])
+    // a camera is never "closed" (it leaves its list instead), junk is dropped; Logs starts closed
+    assertEquals(arrangement.closed, ["logs"])
     // settings (its box was broken) went home: the right rail
     assert(arrangement.right.includes("settings"))
     // the stage panel is never folded
@@ -107,7 +108,7 @@ Deno.test("a saved arrangement is made safe: each panel once, unknown ones dropp
     assertEquals(arrangement.weights, { scene: 2 })
     // every known panel exactly once
     const placed = [arrangement.stage, ...arrangement.left, ...arrangement.right, ...arrangement.floating.map((box) => box.id)]
-    assertEquals(placed.sort(), [...IDS].sort())
+    assertEquals(placed.sort(), IDS.filter((id) => id !== "logs").sort())
     // garbage is the default
     assertEquals(normalizeArrangement("junk" as never, IDS), defaultArrangement(IDS))
     // a closed panel is in no place

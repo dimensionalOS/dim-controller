@@ -11,6 +11,8 @@ uses:
         - GET /catalog/robots
         # where recordings live: the gateway is the authority on the folder (DIMOS_APP's recordingsDir when it can't say)
         - GET /history/recordings
+        # the running blueprint's log, for the Logs panel and its chip (followed on the gateway's `log` event)
+        - GET /history/{runId}/logs
     "@desktop-gateway":
         # what this server reads of DIMOS_APP; `app check` says when Desktop doesn't set one, and a launch that
         # can't resolve one says so in this app's own log

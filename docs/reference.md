@@ -102,8 +102,13 @@ One arrangement, made of panels:
   while held and what's being sent (disengaged: why, and Reconnect; nothing to drive yet: why, and the Launcher); in the
   middle the main view's own actions (a camera: fit / fill, next camera, mode; the 3D view: follow; the map: follow,
   fit), focus and the palette; on the right a chip for each problem (the link when it's lost, connecting, degraded or
-  slow; TF; rendering), the gamepad's state, Record, the shortcut list and STOP. A healthy link shows nothing: the
+  slow; TF; rendering; Logs, a fixed-width count of the running blueprint's warnings and errors no one has seen yet,
+  which floats the Logs panel), the gamepad's state, Record, the shortcut list and STOP. A healthy link shows nothing: the
   Status panel has the link, round trip, drops, what's running, the drive and the render rates.
+
+The Logs panel (closed until asked for: the Logs chip, or Settings) follows the running blueprint's dimos log (the
+dimos gateway's `history/{runId}/logs`, read again on its `log` event): the lowest level, a search, a group (one logger:
+pick it from the list or type part of its name) and follow. While it shows, the Logs chip has nothing to count.
 
 Every panel has the same header, its buttons in the same place, shown while the panel is hovered (always on a touch
 screen): collapse / expand, make it the main view (swap: the main view's panel takes its place), pop out / dock. There's

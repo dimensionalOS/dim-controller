@@ -51,11 +51,13 @@ export const SNAP_PX = 14
 const MIN_BODY = 72
 
 /** Where each panel lives until it's moved, and its share of a rail. */
-const HOMES: Record<string, { side: Side; collapsed?: boolean; weight: number; float: { width: number; height: number } }> = {
+const HOMES: Record<string, { side: Side; collapsed?: boolean; closed?: boolean; weight: number; float: { width: number; height: number } }> = {
     map: { side: "left", weight: 1, float: { width: 340, height: 340 } },
     scene: { side: "left", weight: 1.15, float: { width: 420, height: 320 } },
     settings: { side: "right", weight: 1.5, float: { width: 360, height: 520 } },
     tf: { side: "right", collapsed: true, weight: 1, float: { width: 340, height: 420 } },
+    // closed until asked for (the bar's Logs chip or Settings), even in a layout saved before it existed
+    logs: { side: "right", closed: true, weight: 1, float: { width: 760, height: 480 } },
 }
 const CAMERA_HOME = { side: "left" as Side, weight: 1, float: { width: 480, height: 270 + PANEL_HEAD } }
 const PLOT_HOME = { side: "right" as Side, weight: 1, float: { width: 460, height: 280 } }
@@ -111,6 +113,10 @@ export function normalizeArrangement(saved: Partial<Arrangement> | null | undefi
             continue
         }
         const home = homeOf(id)
+        if (home.closed) {
+            closed.add(id)
+            continue
+        }
         if (stage === null && isCamera(id)) {
             stage = id
         } else if (isCamera(id)) {
