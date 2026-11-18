@@ -107,8 +107,8 @@ One arrangement, made of panels:
   Status panel has the link, round trip, drops, what's running, the drive and the render rates.
 
 The Logs panel (closed until asked for: the Logs chip, or Settings) follows the running blueprint's dimos log (the
-dimos gateway's `history/{runId}/logs`, read again on its `log` event), its tools in one row: a Filter button (its popover picks the detail, the lowest level, and the group:
-one logger, picked from the list or typed as part of its name), a search and follow. Each record is one line until clicked. While it shows, the Logs chip has nothing to count.
+dimos gateway's `history/{runId}/logs`, read again on its `log` event), its tools in one row: a Filter button (its popover picks the group: one logger, picked from the list or
+typed as part of its name, and the detail, the lowest level), a search and follow. Each record is one line until clicked. While it shows, the Logs chip has nothing to count.
 
 Every panel has the same header, its buttons in the same place, shown while the panel is hovered (always on a touch
 screen): collapse / expand, make it the main view (swap: the main view's panel takes its place), pop out / dock. There's

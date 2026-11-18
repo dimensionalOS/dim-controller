@@ -1,5 +1,5 @@
 // The running blueprint's dimos log (core/logFeed.ts) as a panel, its tools in one row: a Filter button (its popover
-// picks the detail, the lowest level, and the group: one logger, or any whose name has the typed text), a search and
+// picks the group: one logger, or any whose name has the typed text, and the detail, the lowest level), a search and
 // follow. Each record is one line until
 // clicked (its fields and traceback unfold under it), so a long log scrolls quickly. While it shows, every record counts
 // as seen, so the bar's Logs chip (ui/BarChips.tsx) goes away.
@@ -56,7 +56,7 @@ function Record({ record, open, onToggle }: { record: LoggedRecord; open: boolea
     )
 }
 
-/** The Filter button and its popover: the detail (lowest level) and the group, typed or picked from every logger. */
+/** The Filter button and its popover: the group, typed or picked from every logger, and the detail (lowest level). */
 function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: string[]; change: (patch: Partial<LogFilter>) => void }) {
     const [open, setOpen] = useState(false)
     useDismiss(open, ".logs-filter", () => setOpen(false))
@@ -65,14 +65,12 @@ function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: s
     const groupLabel = filter.group ? filter.group.split("/").slice(-2).join("/") : "all groups"
     return (
         <span className="logs-filter">
-            <Button size="sm" className="logs-filter-button" pressed={open} aria-expanded={open} title="Detail and group" data-testid="logs-filter" onClick={() => setOpen(!open)}>
-                <span className="logs-filter-text">{filter.level}+ · {groupLabel}</span>
+            <Button size="sm" className="logs-filter-button" pressed={open} aria-expanded={open} title="Group and detail" data-testid="logs-filter" onClick={() => setOpen(!open)}>
+                <span className="logs-filter-text">{groupLabel} · {filter.level}+</span>
                 <span aria-hidden>▾</span>
             </Button>
             {open && (
                 <Card padded className="logs-filter-pop" role="dialog" aria-label="Log filter">
-                    <div className="logs-filter-title">Detail</div>
-                    <Segmented size="sm" items={LOG_LEVELS.map((name) => [name, name] as const)} value={filter.level} onChange={(level) => change({ level })} label="lowest level" />
                     <div className="logs-filter-title">Group</div>
                     <TextInput size="sm" placeholder="type part of a logger's name" aria-label="group: a logger, or part of its name" value={filter.group} onChange={(group) => change({ group })} data-testid="logs-group" autoFocus />
                     <div className="logs-groups dr-scroll">
@@ -82,6 +80,8 @@ function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: s
                         ))}
                         {!listed.length && <div className="logs-group-none">no logger has "{filter.group}" (it still filters what comes)</div>}
                     </div>
+                    <div className="logs-filter-title">Detail</div>
+                    <Segmented size="sm" items={LOG_LEVELS.map((name) => [name, name] as const)} value={filter.level} onChange={(level) => change({ level })} label="lowest level" />
                 </Card>
             )}
         </span>
