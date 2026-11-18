@@ -368,9 +368,9 @@ Known gaps (none of these are on a topic in dimos today):
   any joint past that; a fork can set `arm.limits` in `profile/arm.ts`.
 - **Absolute end-effector poses** (`/cartesian_command`, PoseStamped) are only in the cartesian-IK blueprints and need
   the current pose, which they don't publish; the panel lists the topic but jogs by twist and joints.
-- **Go home as dimos means it** is `ManipulationSkills.go_home`, an RPC skill (pickled zenoh queryable) the browser
-  can't call; Home here is joints to 0 over `joint_command`, which is that skill's default preset (the xArm7 sim's
-  preset differs).
+- **Go home as dimos means it** is `ManipulationSkills.go_home`, an RPC skill (a zenoh queryable taking dimos's CBOR)
+  the browser doesn't call; Home here is joints to 0 over `joint_command`, which is that skill's default preset (the
+  xArm7 sim's preset differs).
 - **The arm in 3D** without UrdfManager or the planner is what TF has: ManipulationModule publishes `world → <tip
   link>` only, so the view shows those TF frames (Settings → Layers → TF), not a URDF mesh.
 - Arm commands are page → gateway like continuous driving; there is no agent endpoint for them yet.
@@ -410,9 +410,11 @@ manipulation panel, does, in its order:
 
 Each of these is an endpoint (`api/manipulation`, `/target`, `/evaluate`, `/plan`, `/preview`, `/execute`, `/cancel`,
 `/clear`, `/scene`, `/description`, `/options`), so the agent and every open page share the target and plan. Planning
-and execution go over the planner's own zenoh RPCs (`dimos/rpc/ManipulationModule/<method>`), whose payloads are Python
-pickles: a reader and writer for exactly what these calls carry is in [server/src/pickle.rs](../server/src/pickle.rs),
-tested against bytes captured from a running sim.
+and execution go over the planner's own zenoh RPCs (`dimos/rpc/ManipulationModule/<method>`), whose payloads are
+dimos's CBOR (`dimos/protocol/encode/cbor.py`; Python pickles before dimos#4821): a reader and writer for exactly what
+these calls carry is in [server/src/cbor.rs](../server/src/cbor.rs), tested against the replies dimos's own RPC server
+writes for values captured from a running sim, and the requests it writes against dimos's RPC server and client
+([server/scripts](../server/scripts)).
 
 **The hook.** What viser has that no RPC gives (the model, the feasibility check, the Cartesian plan, obstacle shapes,
 grasp proposals) it gets in-process: dimos's WorldMonitor hands its visualizer all of it. dim-controller does the same

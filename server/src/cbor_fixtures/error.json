@@ -1,0 +1,1 @@
+{"args":["list index out of range"],"traceback":"Traceback (most recent call last):\n  File \"dimos/protocol/rpc/zenohrpc.py\", line 166, in _execute_rpc\n    response = f(*args[0], **args[1])\n                  ~~~~^^^\nIndexError: list index out of range\n","type_module":"builtins","type_name":"IndexError"}

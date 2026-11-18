@@ -1,0 +1,1 @@
+{"__class__":"PlanResult","message":"Failed to materialize plan: RoboPlan TOPP-RA parametrization failed: initialGridpoints should be monotonically increasing.","plan":null,"status":{"__class__":"PlanStatus","name":"FAILED","value":2}}
