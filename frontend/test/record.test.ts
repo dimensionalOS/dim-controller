@@ -47,15 +47,17 @@ Deno.test("numbers read at a glance", () => {
 })
 
 Deno.test("the Record toggle (bar and phone HUD): REC at rest, the time while recording, and held while it starts or stops", () => {
-    const rest = { active: false, pending: null, unavailable: null, recordNew: true, selected: 0, seconds: 0 } as const
+    const rest = { active: false, pending: null, unavailable: null, recordNew: true, selected: 0, seconds: 0, idle: false } as const
     assertEquals(recordToggleState(rest), { recording: false, text: "REC", disabled: false })
     assertEquals(recordToggleState({ ...rest, active: true, seconds: 75 }), { recording: true, text: formatClock(75), disabled: false })
     assertEquals(recordToggleState({ ...rest, pending: "start" }), { recording: false, text: "Starting…", disabled: true })
     assertEquals(recordToggleState({ ...rest, active: true, pending: "stop" }), { recording: true, text: "Stopping…", disabled: true })
-    // the recorder down, or nothing chosen without new streams joining: can't start
+    // the recorder down, nothing running, or nothing chosen without new streams joining: can't start
     assert(recordToggleState({ ...rest, unavailable: "recorder down" }).disabled)
+    assert(recordToggleState({ ...rest, idle: true }).disabled)
     assert(recordToggleState({ ...rest, recordNew: false }).disabled)
     assert(!recordToggleState({ ...rest, recordNew: false, selected: 3 }).disabled)
-    // a recording can always be stopped, even if every stream was turned off since
+    // a recording can always be stopped, even if every stream was turned off or the blueprint stopped since
     assert(!recordToggleState({ ...rest, active: true, recordNew: false }).disabled)
+    assert(!recordToggleState({ ...rest, active: true, idle: true }).disabled)
 })

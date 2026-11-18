@@ -19,6 +19,14 @@ app's data dir), so a change from the agent or another window shows up in every 
 continuous driving from the keys and sticks, which publishes through the gateway at 20 Hz with the gateway's deadman;
 `POST api/drive` is the endpoint way to drive (a Twist for up to 10 s, then zeros; `dryRun` sends nothing).
 
+## URL options
+
+For an app that shows the Controller in an iframe, e.g. `../dim-controller/?robot=arm&onboarding=off`
+([core/urlOptions.ts](../frontend/src/core/urlOptions.ts)):
+
+- `robot=<type>` (`dog`, `humanoid`, `wheeled`, `arm`, `drone`): this page uses that [controller format](#controller-format), saved nowhere (other pages keep theirs).
+- `onboarding=off`: no first-run message cards and no "Waiting for lidar data." in the 3D view; driving is still held when nothing can be driven.
+
 ## What it shows
 
 Every dimos topic is `dimos/<topic>/<message type>` on zenoh, so the key says how to draw it. Each message type has a

@@ -111,6 +111,12 @@ export class RunWatch {
     }
 }
 
+/** Nothing running: no blueprint the Launcher started and no robot data on the bus (a blueprint run from a terminal,
+ * `dimos run` / `dtk run`, sends some; /rpc and /dimos/ topics are dimos's own). */
+export function nothingRunning(state: RunState, topics: { name: string }[]): boolean {
+    return state.running.length === 0 && !topics.some((topic) => !/^\/rpc\b|^\/dimos\//.test(topic.name))
+}
+
 /** A running blueprint has dimos's ManipulationModule (the arm planner viser sits on): the controller's Plan and move
  * shows whatever the controller format, since a robot that drives can have arms too (an R1 Pro's nav). */
 export function plannerRunning(state: RunState): boolean {
