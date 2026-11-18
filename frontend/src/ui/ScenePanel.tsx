@@ -38,6 +38,7 @@ import { jointControlState } from "../core/jointControl.ts"
 import { SceneSettings } from "./SettingsPanel.tsx"
 import { SnapshotTools } from "./SnapshotGallery.tsx"
 import { saveSnapshot, snapshot3d } from "../core/snapshots.ts"
+import { urlOptions } from "../core/urlOptions.ts"
 
 
 const isCloud = (entry: LayerEntry) => entry.topic.type === "sensor_msgs.PointCloud2"
@@ -98,7 +99,7 @@ export function ScenePanel({ host, app, onTf }: { host: RefObject<HTMLDivElement
             {app && !off && <ViewControls app={app} />}
             {app && !off && <JointControlArea app={app} />}
             {app && !off && <TfFootnote app={app} onOpen={onTf} />}
-            {app && !off && <SceneWaiting app={app} />}
+            {app && !off && !urlOptions.onboardingOff && <SceneWaiting app={app} />}
             {app && menuOpen && !off && <CloudMenu app={app} anchor={cloudButton.current} onClose={() => setMenuOpen(false)} />}
         </Panel>
         </>
