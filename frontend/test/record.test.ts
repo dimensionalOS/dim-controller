@@ -3,6 +3,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1"
 import { biggestStreams, formatClock, formatRate, inRecordingsFolder, isRecorded, isRpcTopic, recordToggleState, TOP_STREAMS } from "../src/core/recordFormat.ts"
 import type { StreamRate } from "../src/core/recorder.ts"
+import { nothingRunning, type RunState } from "../src/core/runs.ts"
 
 const stream = (topic: string, bytesPerSecond: number): StreamRate => ({
     key: `dimos${topic}/x.Y`,
@@ -60,4 +61,11 @@ Deno.test("the Record toggle (bar and phone HUD): REC at rest, the time while re
     // a recording can always be stopped, even if every stream was turned off or the blueprint stopped since
     assert(!recordToggleState({ ...rest, active: true, recordNew: false }).disabled)
     assert(!recordToggleState({ ...rest, active: true, idle: true }).disabled)
+})
+
+Deno.test("nothing running: the page's own requests and dimos's topics on the bus aren't a robot", () => {
+    const none: RunState = { known: true, desktop: true, dimosInstalled: true, running: [], starting: null, blueprints: {} }
+    const asks = ["/render_file_request", "/file_request", "/named_locations_request", "/rpc/x", "/dimos/logs"].map((name) => ({ name }))
+    assert(nothingRunning(none, asks))
+    assert(!nothingRunning(none, [...asks, { name: "/color_image" }]))
 })
