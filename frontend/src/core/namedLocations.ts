@@ -6,8 +6,8 @@
 // hears (one older than the cached revision of the same run excepted: the echo of a superseded edit). So the page
 // publishes straight to the topic without waiting to be told it may -- last writer wins, and the echo redraws
 // everyone. The module publishes its list when it starts; /named_locations_request is the recovery path, asked on
-// every connect and retried while nothing has come. Go to is the location's pose as a PointStamped on the planner's
-// /goal. `state.locations` is null until a list comes: then the module is there, and the 3D view's labels are these
+// every connect and retried while nothing has come. Go to is the location's position on the planner's /goal, as a
+// PointStamped (dimos before PoseStamped goals) and a PoseStamped with no heading (its all-zero quaternion). `state.locations` is null until a list comes: then the module is there, and the 3D view's labels are these
 // (core/labels.ts).
 import { decode, encode } from "./lcm/lcm.ts"
 import { Store } from "./store.ts"
@@ -21,7 +21,9 @@ export const REQUEST_KEY = dimosKey("/named_locations_request", STRING_TYPE)
 export const POINT_STAMPED = "geometry_msgs.PointStamped"
 /** How often to ask again while no list has come (the module may not be up yet). */
 const RETRY_MS = 5000
+export const POSE_STAMPED = "geometry_msgs.PoseStamped"
 export const GOAL_KEY = dimosKey("/goal", POINT_STAMPED)
+export const POSE_GOAL_KEY = dimosKey("/goal", POSE_STAMPED)
 
 /** The module run and revision a list is (or was edited from). */
 export type Revision = { server_id: string; seq_num: number }
@@ -79,6 +81,11 @@ export const stringBytes = (data: string) => encode(STRING_TYPE, { data })
 /** A goal at `location`'s position, in its frame, stamped `nowMs`. */
 export function goalBytes({ frame_id, position: [x, y, z] }: NamedPose, nowMs = Date.now()): Uint8Array {
     return encode(POINT_STAMPED, { header: { stamp: stampOf(nowMs), frame_id }, point: { x, y, z } })
+}
+
+/** The same goal as a PoseStamped with no heading (the all-zero quaternion): the robot ends facing any way. */
+export function poseGoalBytes({ frame_id, position: [x, y, z] }: NamedPose, nowMs = Date.now()): Uint8Array {
+    return encode(POSE_STAMPED, { header: { stamp: stampOf(nowMs), frame_id }, pose: { position: { x, y, z }, orientation: { x: 0, y: 0, z: 0, w: 0 } } })
 }
 
 /** Whether `next` replaces a cache of `cached`: anything but an older revision of the same run. */
@@ -166,6 +173,7 @@ export class NamedLocations {
             return Promise.reject(new Error(`no location named “${name}”`))
         }
         this.connection.command(GOAL_KEY)
-        return this.#put(GOAL_KEY, goalBytes(location))
+        this.connection.command(POSE_GOAL_KEY)
+        return this.#put(GOAL_KEY, goalBytes(location)).then(() => this.#put(POSE_GOAL_KEY, poseGoalBytes(location)))
     }
 }

@@ -4,7 +4,7 @@
 // heard.
 import { assertEquals } from "jsr:@std/assert@1"
 import { decode } from "../src/core/lcm/lcm.ts"
-import { GOAL_KEY, listBytes, NamedLocations, type NamedPose, POINT_STAMPED, readList, renamedLocation, replaces, REQUEST_KEY, SNAPSHOT_KEY, stringBytes, UPDATE_TYPE, withLocation, withoutLocation } from "../src/core/namedLocations.ts"
+import { GOAL_KEY, listBytes, POSE_GOAL_KEY, POSE_STAMPED, NamedLocations, type NamedPose, POINT_STAMPED, readList, renamedLocation, replaces, REQUEST_KEY, SNAPSHOT_KEY, stringBytes, UPDATE_TYPE, withLocation, withoutLocation } from "../src/core/namedLocations.ts"
 import { Store } from "../src/core/store.ts"
 import type { Connection } from "../src/core/transport.ts"
 
@@ -94,6 +94,8 @@ Deno.test("edits carry the cached list's revision, and the page draws the latest
     await named.goTo("galley")
     const goal = decode(POINT_STAMPED, fake.sent[1].bytes)
     assertEquals([fake.sent[1].key, goal.header.frame_id, goal.point], [GOAL_KEY, "premap", { x: 1, y: 0, z: 0 }])
+    const pose = decode(POSE_STAMPED, fake.sent[2].bytes)
+    assertEquals([fake.sent[2].key, pose.header.frame_id, pose.pose.position, pose.pose.orientation], [POSE_GOAL_KEY, "premap", { x: 1, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 0 }], "and a PoseStamped with no heading")
     } finally {
         named.stop()
     }
