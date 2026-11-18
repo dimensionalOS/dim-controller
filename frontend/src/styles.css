@@ -1284,10 +1284,20 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 /* the Logs panel (ui/LogsPanel.tsx): the log fills the body, its tools and group row above it */
 .panel-content.logs-body { display: flex; min-height: 0; padding: 6px 8px 8px; }
 .logs-panel { flex: 1; min-width: 0; }
-.logs-panel .dr-slog__tools { flex-wrap: wrap; }
-.logs-panel .dr-slog__level { width: 150px; }
-.logs-group-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.logs-group { flex: 1; min-width: 0; }
+.logs-tools { min-width: 0; }
+.logs-panel .logs-tools .logs-search { flex: 0 1 200px; min-width: 90px; }
+.logs-filter { position: relative; flex: none; }
+.logs-filter-button { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; }
+.logs-filter-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11.5px var(--mono); }
+.logs-filter-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: flex; flex-direction: column; gap: 6px; width: 340px; max-width: 80vw; box-shadow: var(--shadow-lg); }
+/* opaque over the log (the theme's card is see-through) */
+.lv-panel .logs-filter-pop { background: var(--bg); }
+.logs-filter-title { color: var(--muted-fg); font: 600 10.5px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; }
+.logs-groups { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.logs-group-item { padding: 4px 8px; border: 0; background: none; color: var(--fg); font: 11.5px var(--mono); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs-group-item:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.logs-group-item.selected { color: var(--primary); }
+.logs-group-none { padding: 4px 8px; color: var(--muted-fg); font: 11px var(--sans); }
 /* a record folded is one line (ui/LogsPanel.tsx); a click unfolds its fields and traceback */
 .logs-line { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 1px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .logs-line:hover { background: var(--hover, rgba(127, 127, 127, 0.08)); background: color-mix(in srgb, var(--fg) 6%, transparent); }
@@ -1298,4 +1308,4 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 .logs-more { flex: none; color: var(--muted-fg); font-size: 10.5px; }
 .logs-detail { padding-bottom: 4px; }
 .logs-fold-all { flex: none; font-size: 11px; }
-.logs-count { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-fg); font: 11px var(--mono); }
+.logs-count { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-fg); font: 11px var(--mono); }

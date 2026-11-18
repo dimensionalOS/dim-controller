@@ -1,13 +1,15 @@
-// The running blueprint's dimos log (core/logFeed.ts) as a panel: the lowest level, a search, a group (one logger, or
-// any whose name has the typed text: a list to pick from, or type it) and follow. Each record is one line until
+// The running blueprint's dimos log (core/logFeed.ts) as a panel, its tools in one row: a Filter button (its popover
+// picks the detail, the lowest level, and the group: one logger, or any whose name has the typed text), a search and
+// follow. Each record is one line until
 // clicked (its fields and traceback unfold under it), so a long log scrolls quickly. While it shows, every record counts
 // as seen, so the bar's Logs chip (ui/BarChips.tsx) goes away.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Checkbox, LOG_LEVELS, SearchInput, Select, splitRecord, TextInput, Traceback } from "dimos-react"
+import { Button, Card, Checkbox, LOG_LEVELS, SearchInput, Segmented, splitRecord, TextInput, Traceback } from "dimos-react"
 import { useStore } from "../core/store.ts"
 import { filterRecords, type LogFilter, logFeed, type LoggedRecord } from "../core/logFeed.ts"
 import { readLocal, writeLocal } from "../core/videoQuality.ts"
 import { useWorkspaceApi } from "./Workspace.tsx"
+import { useDismiss } from "./Panel.tsx"
 
 /** at most this many of the matching records are drawn (the newest) */
 const SHOWN_MAX = 500
@@ -51,6 +53,38 @@ function Record({ record, open, onToggle }: { record: LoggedRecord; open: boolea
                 </div>
             )}
         </div>
+    )
+}
+
+/** The Filter button and its popover: the detail (lowest level) and the group, typed or picked from every logger. */
+function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: string[]; change: (patch: Partial<LogFilter>) => void }) {
+    const [open, setOpen] = useState(false)
+    useDismiss(open, ".logs-filter", () => setOpen(false))
+    const typed = filter.group.trim().toLowerCase()
+    const listed = typed && !loggers.includes(filter.group) ? loggers.filter((name) => name.toLowerCase().includes(typed)) : loggers
+    const groupLabel = filter.group ? filter.group.split("/").slice(-2).join("/") : "all groups"
+    return (
+        <span className="logs-filter">
+            <Button size="sm" className="logs-filter-button" pressed={open} aria-expanded={open} title="Detail and group" data-testid="logs-filter" onClick={() => setOpen(!open)}>
+                <span className="logs-filter-text">{filter.level}+ · {groupLabel}</span>
+                <span aria-hidden>▾</span>
+            </Button>
+            {open && (
+                <Card padded className="logs-filter-pop" role="dialog" aria-label="Log filter">
+                    <div className="logs-filter-title">Detail</div>
+                    <Segmented size="sm" items={LOG_LEVELS.map((name) => [name, name] as const)} value={filter.level} onChange={(level) => change({ level })} label="lowest level" />
+                    <div className="logs-filter-title">Group</div>
+                    <TextInput size="sm" placeholder="type part of a logger's name" aria-label="group: a logger, or part of its name" value={filter.group} onChange={(group) => change({ group })} data-testid="logs-group" autoFocus />
+                    <div className="logs-groups dr-scroll">
+                        <button type="button" className={`logs-group-item ${filter.group ? "" : "selected"}`} onClick={() => change({ group: "" })}>all groups</button>
+                        {listed.map((name) => (
+                            <button key={name} type="button" className={`logs-group-item ${filter.group === name ? "selected" : ""}`} title={name} onClick={() => change({ group: name })}>{name}</button>
+                        ))}
+                        {!listed.length && <div className="logs-group-none">no logger has "{filter.group}" (it still filters what comes)</div>}
+                    </div>
+                </Card>
+            )}
+        </span>
     )
 }
 
@@ -98,26 +132,10 @@ export function LogsPanel() {
     const note = feed.note ?? (feed.runId && !shown.length ? (feed.records.length ? "Nothing matches these filters." : "No log lines yet.") : null)
     return (
         <div className="dr-slog logs-panel" data-testid="logs-panel">
-            <div className="dr-slog__tools">
-                <Select size="sm" aria-label="lowest level" className="dr-slog__level" value={filter.level} onChange={(level) => change({ level })} options={LOG_LEVELS.map((name) => [name, `${name} and up`] as const)} />
-                <SearchInput placeholder="search the log…" aria-label="search the log" value={filter.query} onChange={(query) => change({ query })} />
-                <Checkbox label="follow" value={follow} onChange={setFollow} />
-            </div>
-            <div className="logs-group-row">
-                <TextInput
-                    size="sm"
-                    className="logs-group"
-                    list="logs-groups"
-                    placeholder="Group: all"
-                    aria-label="group: a logger, or part of its name"
-                    title="A logger: pick one, or type part of a name"
-                    value={filter.group}
-                    onChange={(group) => change({ group })}
-                    data-testid="logs-group"
-                />
-                <datalist id="logs-groups">
-                    {feed.loggers.map((name) => <option key={name} value={name} />)}
-                </datalist>
+            <div className="dr-slog__tools logs-tools">
+                <FilterMenu filter={filter} loggers={feed.loggers} change={change} />
+                <SearchInput className="logs-search" placeholder="search…" aria-label="search the log" value={filter.query} onChange={(query) => change({ query })} />
+                <Checkbox label="follow" value={follow} onChange={setFollow} title="Keep the newest line in view" />
                 {open.size > 0 && <button type="button" className="link logs-fold-all" onClick={() => setOpen(new Set())}>fold all</button>}
                 <span className="logs-count" title={run ?? undefined}>
                     {matching.length > shown.length ? `newest ${shown.length} of ${matching.length}` : `${matching.length} of ${feed.records.length}`}
