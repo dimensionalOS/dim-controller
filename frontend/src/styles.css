@@ -1288,4 +1288,14 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 .logs-panel .dr-slog__level { width: 150px; }
 .logs-group-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .logs-group { flex: 1; min-width: 0; }
+/* a record folded is one line (ui/LogsPanel.tsx); a click unfolds its fields and traceback */
+.logs-line { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 1px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.logs-line:hover { background: var(--hover, rgba(127, 127, 127, 0.08)); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.logs-fold { flex: none; width: 1ch; color: var(--muted-fg); }
+.logs-line .dr-slog__logger { flex: none; max-width: 32%; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs-event { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs-rec.open .logs-event { white-space: pre-wrap; word-break: break-word; }
+.logs-more { flex: none; color: var(--muted-fg); font-size: 10.5px; }
+.logs-detail { padding-bottom: 4px; }
+.logs-fold-all { flex: none; font-size: 11px; }
 .logs-count { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-fg); font: 11px var(--mono); }
