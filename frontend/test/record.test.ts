@@ -3,6 +3,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1"
 import { biggestStreams, formatClock, formatRate, inRecordingsFolder, isRecorded, isRpcTopic, recordToggleState, TOP_STREAMS } from "../src/core/recordFormat.ts"
 import type { StreamRate } from "../src/core/recorder.ts"
+import { nothingRunning, type RunState } from "../src/core/runs.ts"
 
 const stream = (topic: string, bytesPerSecond: number): StreamRate => ({
     key: `dimos${topic}/x.Y`,
@@ -47,15 +48,24 @@ Deno.test("numbers read at a glance", () => {
 })
 
 Deno.test("the Record toggle (bar and phone HUD): REC at rest, the time while recording, and held while it starts or stops", () => {
-    const rest = { active: false, pending: null, unavailable: null, recordNew: true, selected: 0, seconds: 0 } as const
+    const rest = { active: false, pending: null, unavailable: null, recordNew: true, selected: 0, seconds: 0, idle: false } as const
     assertEquals(recordToggleState(rest), { recording: false, text: "REC", disabled: false })
     assertEquals(recordToggleState({ ...rest, active: true, seconds: 75 }), { recording: true, text: formatClock(75), disabled: false })
     assertEquals(recordToggleState({ ...rest, pending: "start" }), { recording: false, text: "Starting…", disabled: true })
     assertEquals(recordToggleState({ ...rest, active: true, pending: "stop" }), { recording: true, text: "Stopping…", disabled: true })
-    // the recorder down, or nothing chosen without new streams joining: can't start
+    // the recorder down, nothing running, or nothing chosen without new streams joining: can't start
     assert(recordToggleState({ ...rest, unavailable: "recorder down" }).disabled)
+    assert(recordToggleState({ ...rest, idle: true }).disabled)
     assert(recordToggleState({ ...rest, recordNew: false }).disabled)
     assert(!recordToggleState({ ...rest, recordNew: false, selected: 3 }).disabled)
-    // a recording can always be stopped, even if every stream was turned off since
+    // a recording can always be stopped, even if every stream was turned off or the blueprint stopped since
     assert(!recordToggleState({ ...rest, active: true, recordNew: false }).disabled)
+    assert(!recordToggleState({ ...rest, active: true, idle: true }).disabled)
+})
+
+Deno.test("nothing running: the page's own requests and dimos's topics on the bus aren't a robot", () => {
+    const none: RunState = { known: true, desktop: true, dimosInstalled: true, running: [], starting: null, blueprints: {} }
+    const asks = ["/render_file_request", "/file_request", "/named_locations_request", "/rpc/x", "/dimos/logs"].map((name) => ({ name }))
+    assert(nothingRunning(none, asks))
+    assert(!nothingRunning(none, [...asks, { name: "/color_image" }]))
 })

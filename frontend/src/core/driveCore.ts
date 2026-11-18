@@ -16,6 +16,7 @@ import type { RobotProfile, RobotType } from "../profile/types.ts"
 import { checkLink, DEFAULT_MAX_LATENCY_MS, LINK_CHECK_MS, maxLatencyOf } from "./linkWatch.ts"
 import type { ResolvedType, RobotsAnswer } from "./robotType.ts"
 import { robotsAnswer } from "./robotType.ts"
+import { urlOptions } from "./urlOptions.ts"
 
 export interface ViewSettings {
     /** the robot type picked in Settings (a RobotType), "" = auto (core/robotType.ts) */
@@ -140,15 +141,18 @@ export class DriveCore {
         }
     }
 
-    /** Always the wheeled base's controls (Jeff 10-26: no format picker; drones come later). The auto-detection
-     * (core/robotType.ts resolveType) stays for when more formats return. */
+    /** The type this page's URL asks for (?robot=arm), else the wheeled base's controls (Jeff 10-26: no format
+     * picker; drones come later). The auto-detection (core/robotType.ts resolveType) stays for when more formats return. */
     #resolve(): ResolvedType {
+        if (urlOptions.robot) {
+            return { type: urlOptions.robot, reason: `this page's URL (?robot=${urlOptions.robot})` }
+        }
         return { type: "wheeled", reason: "the wheeled base controls" }
     }
 
     #updateRobot() {
         const resolved = this.#resolve()
-        const auto = true
+        const auto = !urlOptions.robot
         const current = this.robot.get()
         if (current.type !== resolved.type || current.reason !== resolved.reason || current.auto !== auto) {
             this.robot.set({ type: resolved.type, auto, reason: resolved.reason })
@@ -158,7 +162,8 @@ export class DriveCore {
             this.drive.setProfile(this.#profile)
             this.profileChanged.forEach((changed) => changed(this.#profile))
         }
-        if (this.settings.get().robot !== resolved.type && typeof location !== "undefined") {
+        // a type from the URL is this page's alone: the shared lv.view.robot keeps the other pages' type
+        if (!urlOptions.robot && this.settings.get().robot !== resolved.type && typeof location !== "undefined") {
             this.settings.update({ robot: resolved.type })
         }
     }

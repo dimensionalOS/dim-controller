@@ -36,6 +36,7 @@ import { cameraId, FIXED_PANELS, plotId } from "./ui/workspace.ts"
 import type { RunState } from "./core/runs.ts"
 import { openOverlay } from "./ui/overlay.ts"
 import { ContainCrash } from "./ui/Unavailable.tsx"
+import { urlOptions } from "./core/urlOptions.ts"
 
 declare global {
     interface Window {
@@ -146,7 +147,7 @@ function Driving({ app, api }: { app: ViewerApp; api: WorkspaceApi }) {
             {api.mobile
                 ? !onboarding.blocksDriving && (isArm ? <ArmHud app={app} mobile /> : <DriveHud app={app} mobile />)
                 : <><TopBar app={app} api={api} /><KeyOverlay app={app} stage={api.layout.stage} /></>}
-            {onboarding.message && (
+            {onboarding.message && !urlOptions.onboardingOff && (
                 <div className="stage-message" style={rectStyle(api.layout.stage)}>
                     <EmptyLayer {...onboarding.message} />
                 </div>
