@@ -7,7 +7,7 @@
 // publishes straight to the topic without waiting to be told it may -- last writer wins, and the echo redraws
 // everyone. The module publishes its list when it starts; /named_locations_request is the recovery path, asked on
 // every connect and retried while nothing has come. Go to is the location's position on the planner's /goal, as a
-// PointStamped (dimos before PoseStamped goals) and a PoseStamped with no heading (its all-zero quaternion). `state.locations` is null until a list comes: then the module is there, and the 3D view's labels are these
+// PointStamped (dimos before PoseStamped goals) and a PoseStamped with the location's heading (none: all-zero quaternion). `state.locations` is null until a list comes: then the module is there, and the 3D view's labels are these
 // (core/labels.ts).
 import { decode, encode } from "./lcm/lcm.ts"
 import { Store } from "./store.ts"
@@ -83,9 +83,13 @@ export function goalBytes({ frame_id, position: [x, y, z] }: NamedPose, nowMs = 
     return encode(POINT_STAMPED, { header: { stamp: stampOf(nowMs), frame_id }, point: { x, y, z } })
 }
 
-/** The same goal as a PoseStamped with no heading (the all-zero quaternion): the robot ends facing any way. */
-export function poseGoalBytes({ frame_id, position: [x, y, z] }: NamedPose, nowMs = Date.now()): Uint8Array {
-    return encode(POSE_STAMPED, { header: { stamp: stampOf(nowMs), frame_id }, pose: { position: { x, y, z }, orientation: { x: 0, y: 0, z: 0, w: 0 } } })
+/** Whether a location's quaternion is a heading someone chose: not all-zero ("no heading") and not the identity every older location was written with. */
+export const hasHeading = ([qx, qy, qz, qw]: NamedPose["orientation"]) => !(qx === 0 && qy === 0 && qz === 0 && (qw === 0 || Math.abs(qw) === 1))
+
+/** The same goal as a PoseStamped: facing the location's heading when it has one (hasHeading), else the all-zero quaternion (ends facing any way). */
+export function poseGoalBytes({ frame_id, position: [x, y, z], orientation }: NamedPose, nowMs = Date.now()): Uint8Array {
+    const [qx, qy, qz, qw] = hasHeading(orientation) ? orientation : [0, 0, 0, 0]
+    return encode(POSE_STAMPED, { header: { stamp: stampOf(nowMs), frame_id }, pose: { position: { x, y, z }, orientation: { x: qx, y: qy, z: qz, w: qw } } })
 }
 
 /** Whether `next` replaces a cache of `cached`: anything but an older revision of the same run. */

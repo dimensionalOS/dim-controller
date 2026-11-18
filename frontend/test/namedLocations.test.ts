@@ -4,7 +4,7 @@
 // heard.
 import { assertEquals } from "jsr:@std/assert@1"
 import { decode } from "../src/core/lcm/lcm.ts"
-import { GOAL_KEY, listBytes, POSE_GOAL_KEY, POSE_STAMPED, NamedLocations, type NamedPose, POINT_STAMPED, readList, renamedLocation, replaces, REQUEST_KEY, SNAPSHOT_KEY, stringBytes, UPDATE_TYPE, withLocation, withoutLocation } from "../src/core/namedLocations.ts"
+import { GOAL_KEY, hasHeading, listBytes, poseGoalBytes, POSE_GOAL_KEY, POSE_STAMPED, NamedLocations, type NamedPose, POINT_STAMPED, readList, renamedLocation, replaces, REQUEST_KEY, SNAPSHOT_KEY, stringBytes, UPDATE_TYPE, withLocation, withoutLocation } from "../src/core/namedLocations.ts"
 import { Store } from "../src/core/store.ts"
 import type { Connection } from "../src/core/transport.ts"
 
@@ -157,4 +157,12 @@ Deno.test("it keeps asking while no list has come, and stops at the first one", 
 
 Deno.test("strings are std_msgs.String", () => {
     assertEquals(decode("std_msgs.String", stringBytes("kitchen")).data, "kitchen")
+})
+
+Deno.test("Go to's PoseStamped faces a location's chosen heading; identity (older locations) and all-zero mean none", () => {
+    const at = (orientation: [number, number, number, number]) => decode(POSE_STAMPED, poseGoalBytes({ label: "a", frame_id: "map", position: [1, 2, 0], orientation })).pose.orientation
+    assertEquals(at([0, 0, 0, 1]), { x: 0, y: 0, z: 0, w: 0 })
+    assertEquals(at([0, 0, 0, 0]), { x: 0, y: 0, z: 0, w: 0 })
+    assertEquals(at([0, 0, Math.SQRT1_2, Math.SQRT1_2]), { x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 })
+    assertEquals([hasHeading([0, 0, 0, -1]), hasHeading([0, 0, 1, 0])], [false, true])
 })
