@@ -48,6 +48,33 @@ pub async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {
 }
 
 async fn request(base: &str, method: &str, path: &str, body: Option<&Value>) -> Result<Value> {
+    let payload = body.map(Value::to_string).unwrap_or_default();
+    let (status, body) = exchange(base, method, path, "application/json", payload.as_bytes()).await?;
+    let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    if !(200..300).contains(&status) {
+        bail!(
+            "{}",
+            value["error"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("Desktop said {status}"))
+        );
+    }
+    Ok(value)
+}
+
+/// POST `body` as application/cbor; the reply's bytes (an error reply's JSON message as the error).
+pub async fn post_cbor(base: &str, path: &str, body: &[u8]) -> Result<Vec<u8>> {
+    let (status, reply) = exchange(base, "POST", path, "application/cbor", body).await?;
+    if !(200..300).contains(&status) {
+        let value: Value = serde_json::from_slice(&reply).unwrap_or(Value::Null);
+        bail!("{}", value["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("Desktop said {status}")));
+    }
+    Ok(reply)
+}
+
+/// One HTTP/1.1 request to Desktop: (status, body).
+async fn exchange(base: &str, method: &str, path: &str, content_type: &str, payload: &[u8]) -> Result<(u16, Vec<u8>)> {
     let rest = base
         .strip_prefix("http://")
         .context("Desktop's URL must be http://host:port")?;
@@ -62,8 +89,7 @@ async fn request(base: &str, method: &str, path: &str, body: Option<&Value>) -> 
     } else {
         format!("{host}:80")
     };
-    let payload = body.map(Value::to_string).unwrap_or_default();
-    let request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
+    let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
     let mut stream = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         tokio::net::TcpStream::connect(&address),
@@ -71,7 +97,8 @@ async fn request(base: &str, method: &str, path: &str, body: Option<&Value>) -> 
     .await
     .context("Desktop didn't answer")?
     .with_context(|| format!("can't reach Desktop at {address}"))?;
-    stream.write_all(request.as_bytes()).await?;
+    stream.write_all(head.as_bytes()).await?;
+    stream.write_all(payload).await?;
     let mut raw = Vec::new();
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
@@ -79,18 +106,7 @@ async fn request(base: &str, method: &str, path: &str, body: Option<&Value>) -> 
     )
     .await
     .context("Desktop didn't answer")??;
-    let (status, body) = parse_response(&raw)?;
-    let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    if !(200..300).contains(&status) {
-        bail!(
-            "{}",
-            value["error"]
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("Desktop said {status}"))
-        );
-    }
-    Ok(value)
+    parse_response(&raw)
 }
 
 /// (status, body) of an HTTP/1.1 response, with a chunked body put back together.

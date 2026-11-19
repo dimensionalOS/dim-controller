@@ -1,7 +1,8 @@
 //! viser's manipulation workflow for the arm mode's 3D view: target, Plan, Preview, Execute, Cancel, Clear, through
-//! dimos's ManipulationModule. Its RPCs are zenoh queries on `dimos/rpc/ManipulationModule/<method>` whose payload is
-//! `(args, kwargs)` in dimos's CBOR and whose reply is CBOR too (cbor.rs). The plan last made is kept here so Execute
-//! runs exactly that plan, and Preview / a new plan / a new target reach every open page as events.
+//! dimos's ManipulationModule. Its RPCs go through the dimos gateway's CBOR mode (Desktop's
+//! `/gateways/dimos/active/modules/<id>/rpcs/<method>`, content-type application/cbor): the body is `(args, kwargs)`
+//! in dimos's CBOR (cbor.rs) and the reply is `{ok, result, error}` in it too. The plan last made is kept here so
+//! Execute runs exactly that plan, and Preview / a new plan / a new target reach every open page as events.
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -11,9 +12,10 @@ use serde_json::{json, Value};
 use zenoh::query::QueryTarget;
 
 use crate::cbor::{self, Out};
+use crate::desktop;
 use crate::recorder;
 
-/// The module whose RPCs these are; its instance name in the blueprint.
+/// The module whose RPCs these are: its class, which the running instance is found by.
 pub const MODULE: &str = "ManipulationModule";
 /// dim-controller's hook in the blueprint's own process (server/python/dim_controller_hook): what the RPCs don't give
 /// (the robot model, obstacle shapes, grasp proposals, viser's target check and Cartesian plan), when it is installed.
@@ -27,6 +29,10 @@ const PREVIEW_POINTS: usize = 120;
 
 pub struct Manipulation {
     recorder: Arc<recorder::State>,
+    /// Desktop's origin, which the dimos gateway is reached through
+    desktop_url: Arc<String>,
+    /// the gateway's id of the running ManipulationModule, found once (again after a call fails)
+    module: Mutex<Option<String>>,
     /// the last plan: its id (what Execute runs) and the trajectory the pages preview
     plan: Mutex<Option<Value>>,
     /// the target the pages show as the ghost arm: {group, mode, joints?, pose?}
@@ -37,36 +43,44 @@ fn now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|time| time.as_secs_f64()).unwrap_or_default()
 }
 
-/// The error a dimos RPC replied with: its serialized exception (a dict with the type and message).
-fn rpc_error(value: &Value) -> String {
-    let text = |key: &str| value[key].as_str().map(str::to_string);
-    let kind = text("type_name").or_else(|| text("type")).unwrap_or_else(|| "error".into());
-    let message = text("message").or_else(|| text("args").or_else(|| value["args"][0].as_str().map(str::to_string))).unwrap_or_else(|| value.to_string());
-    format!("{kind}: {message}")
-}
-
 impl Manipulation {
-    pub fn new(recorder: Arc<recorder::State>) -> Self {
-        Manipulation { recorder, plan: Mutex::new(None), target: Mutex::new(None) }
+    pub fn new(recorder: Arc<recorder::State>, desktop_url: Arc<String>) -> Self {
+        Manipulation { recorder, desktop_url, module: Mutex::new(None), plan: Mutex::new(None), target: Mutex::new(None) }
     }
 
-    /// Call `ManipulationModule.<method>(*args, **kwargs)` and decode the reply.
+    /// The gateway's id of the running ManipulationModule (`manipulationmodule`, `<namespace>:...` in a namespace).
+    async fn module_id(&self) -> Result<String> {
+        if let Some(id) = self.module.lock().unwrap().clone() {
+            return Ok(id);
+        }
+        let listed = desktop::get(&self.desktop_url, "/gateways/dimos/active/modules").await.map_err(|error| anyhow!("no {MODULE} (is a manipulation blueprint running?): {error}"))?;
+        let id = listed["modules"].as_array().into_iter().flatten().find(|module| module["class"] == MODULE).and_then(|module| module["id"].as_str()).map(str::to_string);
+        let id = id.ok_or_else(|| anyhow!("no {MODULE} running (is a manipulation blueprint running?)"))?;
+        *self.module.lock().unwrap() = Some(id.clone());
+        Ok(id)
+    }
+
+    /// Call `ManipulationModule.<method>(*args, **kwargs)` through the dimos gateway and decode the reply.
     pub async fn call(&self, method: &str, args: Vec<Out>, kwargs: Vec<(&str, Out)>, timeout: Duration) -> Result<Value> {
-        let session = self.recorder.session().await?;
-        let replies = session
-            .get(format!("dimos/rpc/{MODULE}/{method}"))
-            .payload(cbor::rpc_request(args, kwargs))
-            .target(QueryTarget::All)
-            .timeout(timeout)
-            .await
-            .map_err(|error| anyhow!("zenoh: {error}"))?;
-        match first_answer(&replies).await {
-            Some(Ok(bytes)) => cbor::decode(&bytes).map_err(|error| anyhow!("{MODULE}.{method}'s reply: {error}")),
-            Some(Err(bytes)) => {
-                let detail = cbor::decode(&bytes).map(|value| rpc_error(&value));
-                bail!("{MODULE}.{method} failed: {}", detail.unwrap_or_else(|_| "an error it couldn't describe".into()))
+        if self.desktop_url.is_empty() {
+            bail!("no Desktop to reach the dimos gateway through (DIMOS_APP.desktopUrl)");
+        }
+        let id = self.module_id().await?;
+        let path = format!("/gateways/dimos/active/modules/{id}/rpcs/{method}");
+        let reply = match tokio::time::timeout(timeout, desktop::post_cbor(&self.desktop_url, &path, &cbor::rpc_request(args, kwargs))).await {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(error)) => {
+                // the run may have changed (a restart, another blueprint): find the module again next time
+                *self.module.lock().unwrap() = None;
+                bail!("{MODULE}.{method}: {error}")
             }
-            None => bail!("no {MODULE} answered {method} (is a manipulation blueprint running?)"),
+            Err(_) => bail!("{MODULE}.{method} didn't answer within {} s", timeout.as_secs()),
+        };
+        let answer = cbor::decode(&reply).map_err(|error| anyhow!("{MODULE}.{method}'s reply: {error}"))?;
+        if answer["ok"] == true {
+            Ok(answer["result"].clone())
+        } else {
+            bail!("{MODULE}.{method} failed: {}", answer["error"].as_str().unwrap_or("an error it couldn't describe"))
         }
     }
 
@@ -305,6 +319,77 @@ mod tests {
         assert_eq!(both["source"], "cartesian");
         assert_eq!(both["preset"], "home");
         assert!(normalize_target(&json!({ "groups": ["left"] })).is_none());
+    }
+
+    /// A stand-in for Desktop's dimos gateway: lists one ManipulationModule, answers every rpcs call with `reply`
+    /// (bytes dimos's encoder wrote, as the gateway's CBOR mode sends them), and hands back what it was sent.
+    async fn fake_gateway(reply: Vec<u8>) -> (String, tokio::task::JoinHandle<Vec<(String, String, Vec<u8>)>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let served = tokio::spawn(async move {
+            let mut seen = vec![];
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut raw = vec![];
+                let mut chunk = [0u8; 4096];
+                // read the head, then the body by its Content-Length
+                let (head, mut body) = loop {
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    raw.extend(&chunk[..read]);
+                    if let Some(split) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break (String::from_utf8_lossy(&raw[..split]).to_string(), raw[split + 4..].to_vec());
+                    }
+                };
+                let length: usize = head.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ").map(|n| n.trim().parse().unwrap())).unwrap_or(0);
+                while body.len() < length {
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    body.extend(&chunk[..read]);
+                }
+                let line = head.lines().next().unwrap().to_string();
+                let kind = head.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-type: ").map(str::to_string)).unwrap_or_default();
+                let (content_type, answer) = if line.starts_with("GET /gateways/dimos/active/modules ") {
+                    ("application/json", br#"{"modules": [{"id": "other", "class": "Other"}, {"id": "manipulationmodule", "class": "ManipulationModule"}]}"#.to_vec())
+                } else {
+                    ("application/cbor", reply.clone())
+                };
+                let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", answer.len()).into_bytes();
+                response.extend(answer);
+                stream.write_all(&response).await.unwrap();
+                seen.push((line, kind, body));
+            }
+            seen
+        });
+        (url, served)
+    }
+
+    fn manipulation(url: String) -> Manipulation {
+        Manipulation::new(Arc::new(recorder::State::new(std::env::temp_dir().join("lv_manip_test"), "tcp/127.0.0.1:9".into())), Arc::new(url))
+    }
+
+    #[tokio::test]
+    async fn calls_go_through_the_gateways_cbor_mode() {
+        let reply = std::fs::read(format!("{}/src/cbor_fixtures/gateway_plan_to_joints.reply.cbor", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let (url, served) = fake_gateway(reply).await;
+        let names: Vec<String> = (1..=7).map(|i| format!("joint{i}")).collect();
+        let goals = Out::Dict(vec![("manipulator".into(), cbor::joint_state(&names, &[0.6, 0.1, 0.0, 1.2, 0.0, 1.0, 0.0], 1791963651.7957))]);
+        let result = manipulation(url).call("plan_to_joints", vec![goals.clone()], vec![("speed_scale", Out::Float(0.5))], PLAN_TIMEOUT).await.unwrap();
+        assert_eq!(result["status"]["name"], "SUCCEEDED");
+        assert_eq!(result["plan"]["plan_id"], "84a9de8e36c04ece99efcd5d7716bf88");
+        let seen = served.await.unwrap();
+        assert_eq!(seen[0].0, "GET /gateways/dimos/active/modules HTTP/1.1");
+        assert_eq!(seen[1].0, "POST /gateways/dimos/active/modules/manipulationmodule/rpcs/plan_to_joints HTTP/1.1");
+        assert_eq!(seen[1].1, "application/cbor");
+        // the body is exactly dimos's own RPC payload
+        assert_eq!(seen[1].2, cbor::rpc_request(vec![goals], vec![("speed_scale", Out::Float(0.5))]));
+    }
+
+    #[tokio::test]
+    async fn an_rpcs_error_comes_back_as_its_message() {
+        let reply = std::fs::read(format!("{}/src/cbor_fixtures/gateway_error.reply.cbor", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let (url, _) = fake_gateway(reply).await;
+        let error = manipulation(url).call("get_state", vec![], vec![], CALL_TIMEOUT).await.unwrap_err().to_string();
+        assert_eq!(error, "ManipulationModule.get_state failed: IndexError: list index out of range");
     }
 
     #[test]

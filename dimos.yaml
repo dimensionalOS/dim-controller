@@ -13,6 +13,9 @@ uses:
         - GET /history/recordings
         # the running blueprint's log, for the Logs panel and its chip (followed on the gateway's `log` event)
         - GET /history/{runId}/logs
+        # the arm planner's RPCs (the ManipulationModule's, found by its class), in the gateway's CBOR mode
+        - GET /active/modules
+        - POST /active/modules/{id}/rpcs/{name}
     "@desktop-gateway":
         # what this server reads of DIMOS_APP; `app check` says when Desktop doesn't set one, and a launch that
         # can't resolve one says so in this app's own log

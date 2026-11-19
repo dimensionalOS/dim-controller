@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
         annotations: annotations.clone(),
         settings,
         drive: Arc::default(),
-        manipulation: Arc::new(manipulation::Manipulation::new(state.clone())),
+        manipulation: Arc::new(manipulation::Manipulation::new(state.clone(), Arc::new(dimos_app::field(|app| app.desktop_url.as_ref()).unwrap_or_default()))),
         desktop_url: Arc::new(dimos_app::field(|app| app.desktop_url.as_ref()).unwrap_or_default()),
         snapshots: Arc::new(dimos_app::data_dir().join("snapshots")),
     };

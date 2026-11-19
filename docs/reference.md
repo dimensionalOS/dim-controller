@@ -414,7 +414,8 @@ manipulation panel, does, in its order:
 
 Each of these is an endpoint (`api/manipulation`, `/target`, `/evaluate`, `/plan`, `/preview`, `/execute`, `/cancel`,
 `/clear`, `/scene`, `/description`, `/options`), so the agent and every open page share the target and plan. Planning
-and execution go over the planner's own zenoh RPCs (`dimos/rpc/ManipulationModule/<method>`), whose payloads are
+and execution are the planner's RPCs, called through the dimos gateway's CBOR mode
+(`/gateways/dimos/active/modules/<id>/rpcs/<method>`, content-type application/cbor), whose payloads are
 dimos's CBOR (`dimos/protocol/encode/cbor.py`; Python pickles before dimos#4821): a reader and writer for exactly what
 these calls carry is in [server/src/cbor.rs](../server/src/cbor.rs), tested against the replies dimos's own RPC server
 writes for values captured from a running sim, and the requests it writes against dimos's RPC server and client

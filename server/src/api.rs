@@ -583,10 +583,10 @@ impl Api {
             annotations,
             settings: Arc::new(Settings::load(None)),
             drive: Arc::default(),
-            manipulation: Arc::new(Manipulation::new(Arc::new(recorder::State::new(
-                std::env::temp_dir().join("lv_api_test"),
-                "tcp/127.0.0.1:9".into(),
-            )))),
+            manipulation: Arc::new(Manipulation::new(
+                Arc::new(recorder::State::new(std::env::temp_dir().join("lv_api_test"), "tcp/127.0.0.1:9".into())),
+                Arc::new(String::new()),
+            )),
             desktop_url: Arc::new(String::new()),
             snapshots: Arc::new(std::env::temp_dir().join(format!("lv_snapshots_{}", std::process::id()))),
         }
