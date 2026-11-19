@@ -13,7 +13,8 @@ import { useDismiss } from "./Panel.tsx"
 
 /** at most this many of the matching records are drawn (the newest) */
 const SHOWN_MAX = 500
-const FILTER_KEY = "lv.logs.filter"
+// v2: the default detail became warning; a filter saved under the old key kept info
+const FILTER_KEY = "lv.logs.filter.v2"
 /** how far from the bottom still counts as at the bottom (px) */
 const BOTTOM_SLACK = 24
 
@@ -32,14 +33,23 @@ function Record({ record, open, onToggle }: { record: LoggedRecord; open: boolea
     const more = [traceback && "traceback", fields.length && `${fields.length} field${fields.length === 1 ? "" : "s"}`].filter(Boolean).join(", ")
     return (
         <div className={`dr-slog__rec dr-slog__rec--${level} logs-rec ${open ? "open" : ""}`}>
-            <button type="button" className="logs-line" onClick={onToggle} title={open ? "Fold" : more ? `Unfold: ${more}` : record.raw} aria-expanded={open}>
+            {/* not a <button>, so its text can be selected; a click that ends a selection doesn't fold it */}
+            <div
+                role="button"
+                tabIndex={0}
+                className="logs-line"
+                onClick={() => !globalThis.getSelection?.()?.toString() && onToggle()}
+                onKeyDown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), onToggle())}
+                title={open ? "Fold" : more ? `Unfold: ${more}` : record.raw}
+                aria-expanded={open}
+            >
                 <span className="logs-fold" aria-hidden>{more ? (open ? "▾" : "▸") : ""}</span>
                 <span className="dr-slog__ts">{shortTime(record.timestamp)}</span>
                 <span className="dr-slog__lv">{record.level}</span>
                 {record.logger && <span className="dr-slog__logger" title={record.logger}>{open ? record.logger : record.logger.split("/").slice(-2).join("/")}</span>}
                 <span className="logs-event">{record.event}</span>
                 {!open && more && <span className="logs-more">{more}</span>}
-            </button>
+            </div>
             {open && (
                 <div className="logs-detail">
                     {where && <div className="dr-slog__field"><span className="dr-slog__key">at</span>{where}</div>}
@@ -91,7 +101,7 @@ function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: s
 export function LogsPanel() {
     const api = useWorkspaceApi()
     const feed = useStore(logFeed.state)
-    const [filter, setFilter] = useState<LogFilter>(() => ({ level: "info", query: "", group: "", ...readLocal<Partial<LogFilter>>(FILTER_KEY, {}) }))
+    const [filter, setFilter] = useState<LogFilter>(() => ({ level: "warning", query: "", group: "", ...readLocal<Partial<LogFilter>>(FILTER_KEY, {}) }))
     const [follow, setFollow] = useState(true)
     const [open, setOpen] = useState<ReadonlySet<LoggedRecord>>(() => new Set())
     const body = useRef<HTMLDivElement>(null)

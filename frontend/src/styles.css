@@ -1299,7 +1299,8 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 .logs-group-item.selected { color: var(--primary); }
 .logs-group-none { padding: 4px 8px; color: var(--muted-fg); font: 11px var(--sans); }
 /* a record folded is one line (ui/LogsPanel.tsx); a click unfolds its fields and traceback */
-.logs-line { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 1px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.logs-line { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; padding: 1px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; user-select: text; -webkit-user-select: text; }
+.logs-panel .dr-slog__body { user-select: text; -webkit-user-select: text; }
 .logs-line:hover { background: var(--hover, rgba(127, 127, 127, 0.08)); background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .logs-fold { flex: none; width: 1ch; color: var(--muted-fg); }
 .logs-line .dr-slog__logger { flex: none; max-width: 32%; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
