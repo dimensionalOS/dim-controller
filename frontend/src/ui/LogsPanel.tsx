@@ -1,10 +1,11 @@
-// The running blueprint's dimos log (core/logFeed.ts) as a panel, its tools in one row: a Group button (its popover
-// picks one logger, or any whose name has the typed text), a search and follow. The detail (the lowest level shown) is
-// picked by clicking a line's level. Each record is one line until clicked (its fields and traceback unfold under it),
-// so a long log scrolls quickly. While it shows, every record counts as seen, so the bar's Logs chip
-// (ui/BarChips.tsx) goes away.
+// The running blueprint's dimos log (core/logFeed.ts) as a panel: a search on top; it follows the newest line while
+// scrolled to the bottom. The detail (the lowest level shown) is picked by clicking a line's level, the group (one
+// logger, or any whose name has the typed text) by clicking its logger, each in a picker under that line; a set group
+// shows on top until cleared. Each logger has its own color (from its name's hash). Each record is one line until
+// clicked (its fields and traceback unfold under it), so a long log scrolls quickly. While it shows, every record
+// counts as seen, so the bar's Logs chip (ui/BarChips.tsx) goes away.
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Button, Card, Checkbox, LOG_LEVELS, SearchInput, Segmented, splitRecord, TextInput, Traceback } from "dimos-react"
+import { Card, LOG_LEVELS, SearchInput, Segmented, splitRecord, TextInput, Traceback } from "dimos-react"
 import { useStore } from "../core/store.ts"
 import { filterRecords, type LogFilter, logFeed, type LoggedRecord } from "../core/logFeed.ts"
 import { readLocal, writeLocal } from "../core/videoQuality.ts"
@@ -26,8 +27,34 @@ const keys = new WeakMap<LoggedRecord, number>()
 let nextKey = 0
 const keyOf = (record: LoggedRecord) => keys.get(record) ?? (keys.set(record, ++nextKey), nextKey)
 
+/** a logger's own hue, from its name (FNV-1a), so the same logger is always the same color */
+export function loggerHue(name: string): number {
+    let hash = 0x811c9dc5
+    for (let index = 0; index < name.length; index++) {
+        hash = Math.imul(hash ^ name.charCodeAt(index), 0x01000193)
+    }
+    return (hash >>> 0) % 360
+}
+
+/** whether the theme's background is dark (the loggers' colors are lighter on it) */
+function useDarkTheme(): boolean {
+    const read = () => {
+        const [r, g, b] = (getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g) ?? ["0", "0", "0"]).map(Number)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
+    }
+    const [dark, setDark] = useState(read)
+    useEffect(() => {
+        const changed = () => setDark(read())
+        addEventListener("dimos-react-theme", changed)
+        return () => removeEventListener("dimos-react-theme", changed)
+    }, [])
+    return dark
+}
+
+const loggerColor = (name: string, dark: boolean) => `hsl(${loggerHue(name)} 60% ${dark ? 66 : 36}%)`
+
 /** One record: a line (time, level, logger, event, what unfolds), and unfolded, its fields and its traceback. */
-function Record({ record, open, onToggle, onLevel, levelPicker }: { record: LoggedRecord; open: boolean; onToggle: () => void; onLevel: () => void; levelPicker: ReactNode }) {
+function Record({ record, open, dark, onToggle, onLevel, onGroup, picker }: { record: LoggedRecord; open: boolean; dark: boolean; onToggle: () => void; onLevel: () => void; onGroup: () => void; picker: ReactNode }) {
     const { traceback, where, fields } = splitRecord(record)
     const level = record.level.toLowerCase()
     const more = [traceback && "traceback", fields.length && `${fields.length} field${fields.length === 1 ? "" : "s"}`].filter(Boolean).join(", ")
@@ -57,11 +84,25 @@ function Record({ record, open, onToggle, onLevel, levelPicker }: { record: Logg
                 >
                     {record.level}
                 </span>
-                {record.logger && <span className="dr-slog__logger" title={record.logger}>{open ? record.logger : record.logger.split("/").slice(-2).join("/")}</span>}
+                {record.logger && (
+                    <span
+                        className="dr-slog__logger logs-logger"
+                        role="button"
+                        style={{ color: loggerColor(record.logger, dark) }}
+                        title={`${record.logger}: pick the group`}
+                        data-testid="logs-logger"
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            onGroup()
+                        }}
+                    >
+                        {open ? record.logger : record.logger.split("/").slice(-2).join("/")}
+                    </span>
+                )}
                 <span className="logs-event">{record.event}</span>
                 {!open && more && <span className="logs-more">{more}</span>}
             </div>
-            {levelPicker}
+            {picker}
             {open && (
                 <div className="logs-detail">
                     {where && <div className="dr-slog__field"><span className="dr-slog__key">at</span>{where}</div>}
@@ -78,32 +119,25 @@ function Record({ record, open, onToggle, onLevel, levelPicker }: { record: Logg
     )
 }
 
-/** The Group button and its popover: one logger, typed or picked from every logger. */
-function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: string[]; change: (patch: Partial<LogFilter>) => void }) {
-    const [open, setOpen] = useState(false)
-    useDismiss(open, ".logs-filter", () => setOpen(false))
-    const typed = filter.group.trim().toLowerCase()
-    const listed = typed && !loggers.includes(filter.group) ? loggers.filter((name) => name.toLowerCase().includes(typed)) : loggers
-    const groupLabel = filter.group ? filter.group.split("/").slice(-2).join("/") : "all groups"
+/** The group picker under a line whose logger was clicked: that logger, any other, or part of a name typed. */
+function GroupPicker({ group, logger, loggers, dark, onPick, onType, onClose }: { group: string; logger: string; loggers: string[]; dark: boolean; onPick: (group: string) => void; onType: (group: string) => void; onClose: () => void }) {
+    useDismiss(true, ".logs-group-pop, .logs-logger", onClose)
+    const typed = group.trim().toLowerCase()
+    const listed = typed && !loggers.includes(group) ? loggers.filter((name) => name.toLowerCase().includes(typed)) : loggers
+    const item = (name: string, label = name) => (
+        <button key={label} type="button" className={`logs-group-item ${group === name ? "selected" : ""}`} style={name ? { color: loggerColor(name, dark) } : undefined} title={name || "every logger"} onClick={() => onPick(name)}>{label}</button>
+    )
     return (
-        <span className="logs-filter">
-            <Button size="sm" className="logs-filter-button" pressed={open} aria-expanded={open} title="Group: one logger" data-testid="logs-filter" onClick={() => setOpen(!open)}>
-                <span className="logs-filter-text">{groupLabel}</span>
-                <span aria-hidden>▾</span>
-            </Button>
-            {open && (
-                <Card padded className="logs-filter-pop" role="dialog" aria-label="Log filter">
-                    <TextInput size="sm" placeholder="type part of a logger's name" aria-label="group: a logger, or part of its name" value={filter.group} onChange={(group) => change({ group })} data-testid="logs-group" autoFocus />
-                    <div className="logs-groups dr-scroll">
-                        <button type="button" className={`logs-group-item ${filter.group ? "" : "selected"}`} onClick={() => change({ group: "" })}>all groups</button>
-                        {listed.map((name) => (
-                            <button key={name} type="button" className={`logs-group-item ${filter.group === name ? "selected" : ""}`} title={name} onClick={() => change({ group: name })}>{name}</button>
-                        ))}
-                        {!listed.length && <div className="logs-group-none">no logger has "{filter.group}" (it still filters what comes)</div>}
-                    </div>
-                </Card>
-            )}
-        </span>
+        <Card padded className="logs-pop logs-group-pop" role="dialog" aria-label="Group">
+            <span className="logs-filter-title">Group</span>
+            <TextInput size="sm" placeholder="type part of a logger's name" aria-label="group: a logger, or part of its name" value={group} onChange={onType} onEnter={onClose} data-testid="logs-group" autoFocus />
+            <div className="logs-groups dr-scroll">
+                {item("", "all groups")}
+                {item(logger, `${logger} (this line's)`)}
+                {listed.filter((name) => name !== logger).map((name) => item(name))}
+                {!listed.length && <div className="logs-group-none">no logger has "{group}" (it still filters what comes)</div>}
+            </div>
+        </Card>
     )
 }
 
@@ -111,7 +145,7 @@ function FilterMenu({ filter, loggers, change }: { filter: LogFilter; loggers: s
 function LevelPicker({ level, onPick, onClose }: { level: string; onPick: (level: string) => void; onClose: () => void }) {
     useDismiss(true, ".logs-level-pop, .logs-lv", onClose)
     return (
-        <Card padded className="logs-level-pop" role="dialog" aria-label="Detail">
+        <Card padded className="logs-pop logs-level-pop" role="dialog" aria-label="Detail">
             <span className="logs-filter-title">Detail: this level and up</span>
             <Segmented size="sm" items={LOG_LEVELS.map((name) => [name, name] as const)} value={level} onChange={onPick} label="lowest level" />
         </Card>
@@ -124,8 +158,10 @@ export function LogsPanel() {
     const [filter, setFilter] = useState<LogFilter>(() => ({ level: "warning", query: "", group: "", ...readLocal<Partial<LogFilter>>(FILTER_KEY, {}) }))
     const [follow, setFollow] = useState(true)
     const [open, setOpen] = useState<ReadonlySet<LoggedRecord>>(() => new Set())
-    // the line whose level was clicked: the detail picker shows under it
-    const [picking, setPicking] = useState<LoggedRecord | null>(null)
+    // the line whose level or logger was clicked: its picker shows under it
+    const [picking, setPicking] = useState<{ record: LoggedRecord; kind: "level" | "group" } | null>(null)
+    const dark = useDarkTheme()
+    const pick = (record: LoggedRecord, kind: "level" | "group") => setPicking(picking?.record === record && picking.kind === kind ? null : { record, kind })
     const body = useRef<HTMLDivElement>(null)
     const change = (patch: Partial<LogFilter>) => {
         const next = { ...filter, ...patch }
@@ -165,9 +201,12 @@ export function LogsPanel() {
     return (
         <div className="dr-slog logs-panel" data-testid="logs-panel">
             <div className="dr-slog__tools logs-tools">
-                <FilterMenu filter={filter} loggers={feed.loggers} change={change} />
+                {filter.group && (
+                    <button type="button" className="logs-group-chip" title="Showing only this group: clear it" style={{ color: loggerColor(filter.group, dark) }} data-testid="logs-group-chip" onClick={() => change({ group: "" })}>
+                        {filter.group.split("/").slice(-2).join("/")} ✕
+                    </button>
+                )}
                 <SearchInput className="logs-search" placeholder={`search ${feed.records.length} logs`} aria-label="search the log" title={run ?? undefined} value={filter.query} onChange={(query) => change({ query })} />
-                <Checkbox label="follow" value={follow} onChange={setFollow} title="Keep the newest line in view" />
                 {open.size > 0 && <button type="button" className="link logs-fold-all" onClick={() => setOpen(new Set())}>fold all</button>}
             </div>
             <div ref={body} className="dr-slog__body dr-scroll" onScroll={() => atBottom() !== follow && setFollow(atBottom())}>
@@ -177,18 +216,35 @@ export function LogsPanel() {
                         key={keyOf(record)}
                         record={record}
                         open={open.has(record)}
+                        dark={dark}
                         onToggle={() => toggle(record)}
-                        onLevel={() => setPicking(picking === record ? null : record)}
-                        levelPicker={picking === record && (
-                            <LevelPicker
-                                level={filter.level}
-                                onPick={(level) => {
-                                    change({ level })
-                                    setPicking(null)
-                                }}
-                                onClose={() => setPicking(null)}
-                            />
-                        )}
+                        onLevel={() => pick(record, "level")}
+                        onGroup={() => pick(record, "group")}
+                        picker={picking?.record === record && (picking.kind === "level"
+                            ? (
+                                <LevelPicker
+                                    level={filter.level}
+                                    onPick={(level) => {
+                                        change({ level })
+                                        setPicking(null)
+                                    }}
+                                    onClose={() => setPicking(null)}
+                                />
+                            )
+                            : (
+                                <GroupPicker
+                                    group={filter.group}
+                                    logger={record.logger}
+                                    loggers={feed.loggers}
+                                    dark={dark}
+                                    onPick={(group) => {
+                                        change({ group })
+                                        setPicking(null)
+                                    }}
+                                    onType={(group) => change({ group })}
+                                    onClose={() => setPicking(null)}
+                                />
+                            ))}
                     />
                 ))}
             </div>
