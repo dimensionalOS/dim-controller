@@ -1,5 +1,6 @@
 // How a message type becomes something on screen. A layer type is one file under src/layers (or a forker's own
 // file) that calls registerLayer; the LayerManager makes one instance per matching topic while it's switched on.
+import type { Placement } from "./placement.ts"
 import type { ComponentType } from "react"
 import type * as THREE from "three"
 import type { Connection, Topic } from "../transport.ts"
@@ -27,6 +28,8 @@ export interface LayerContext {
     tfProblemFrames(): ReadonlySet<string>
     /** reports a problem the UI shows next to the layer (null clears it) */
     setStatus(status: LayerStatus): void
+    /** where this layer's data is drawn (its Placement setting; core/layers/placement.ts): "attached" for a type without one */
+    placement(): Placement
 }
 
 export interface LayerStatus {
@@ -55,6 +58,8 @@ export interface LayerType<Settings extends object = object> {
     types: string[]
     /** only these topic names (e.g. ["/scene_info"]): for a generic type like std_msgs.String */
     names?: string[]
+    /** its Placement setting's default (core/layers/placement.ts; "attached" when left out); false: none (it is tf itself) */
+    placement?: Placement | false
     /** per-topic settings, persisted; the Settings component edits them (a function picks them per topic) */
     defaults: Settings | ((topic: Topic) => Settings)
     /** on when first seen (default true) */

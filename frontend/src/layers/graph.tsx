@@ -3,6 +3,7 @@
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
 import { placeInFixedFrame, subscribeDecoded } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { FatLines } from "dimos-react/three"
 import { applyLook, makePointMaterial } from "dimos-react/three"
 import { useStore, type Store } from "../core/store.ts"
@@ -34,6 +35,8 @@ class GraphLayer {
     #nodeMaterial: THREE.ShaderMaterial
     #stop: () => void
     #frame: string | null = null
+    /** the shown message's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
 
     constructor(readonly context: LayerContext, readonly topic: Topic, readonly settings: Store<GraphSettings>) {
         this.#nodeMaterial = makePointMaterial(context.viewer.pixelsPerMeter)
@@ -59,6 +62,7 @@ class GraphLayer {
     // deno-lint-ignore no-explicit-any
     #onGraph(path: any, timestamp: number) {
         this.#frame = path.header?.frame_id ?? ""
+        this.#stamp = stampMsOf(path)
         const poses = path.poses ?? []
         const edgeCount = Math.floor(poses.length / 2)
         const settings = this.settings.get()
@@ -109,7 +113,7 @@ class GraphLayer {
 
     update(frame: { fixedFrame: string }) {
         if (this.#frame !== null) {
-            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame)
+            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame, this.#stamp)
         }
     }
 

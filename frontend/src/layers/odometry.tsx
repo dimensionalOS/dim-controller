@@ -2,7 +2,8 @@
 // has driven, kept in the fixed frame (bounded, configurable length; a jump leaves a gap instead of a streak).
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
-import { poseMatrix, subscribeDecoded } from "../core/layers/helpers.ts"
+import { poseMatrix, subscribeDecoded, placeMatrix } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { FatLines } from "dimos-react/three"
 import { robotPose } from "../core/robot.ts"
 import { useStore, type Store } from "../core/store.ts"
@@ -31,6 +32,8 @@ class PoseLayer {
     #stop: () => void
     #pose: THREE.Matrix4 | null = null
     #frame = ""
+    /** the latest pose's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
     #last: THREE.Vector3 | null = null
     #fixedFrame = ""
     #count = 0
@@ -66,9 +69,10 @@ class PoseLayer {
     #onMessage(message: any, timestamp: number) {
         const pose = this.topic.type === "nav_msgs.Odometry" ? message.pose?.pose : this.topic.type === "geometry_msgs.PoseWithCovarianceStamped" ? message.pose?.pose : message.pose
         this.#frame = message.header?.frame_id ?? ""
+        this.#stamp = stampMsOf(message)
         this.#pose = poseMatrix(pose, this.#pose ?? new THREE.Matrix4())
         this.#count++
-        const world = this.context.tf.lookup(this.#frame, this.context.viewer.fixedFrame)
+        const world = placeMatrix(this.context, this.#frame, this.context.viewer.fixedFrame, this.#stamp)
         if (!world) {
             this.context.setStatus({ problem: `no TF path from "${this.#frame}" to "${this.context.viewer.fixedFrame}"`, frame: this.#frame })
             return
@@ -103,7 +107,7 @@ class PoseLayer {
             this.#last = null
         }
         if (this.#pose) {
-            const world = this.context.tf.lookup(this.#frame, frame.fixedFrame)
+            const world = placeMatrix(this.context, this.#frame, frame.fixedFrame, this.#stamp)
             this.#axes.visible = !!world
             if (world) {
                 this.#axes.matrix.multiplyMatrices(world, this.#pose).scale(new THREE.Vector3().setScalar(this.settings.get().axesSize))

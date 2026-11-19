@@ -3,6 +3,7 @@
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
 import { colorFor, placeInFixedFrame, subscribeDecoded } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { LabelPool } from "dimos-react/three"
 import type { Topic } from "../core/transport.ts"
 
@@ -32,14 +33,17 @@ class LabeledPoints {
     #spheres: THREE.InstancedMesh
     #stop: () => void
     #frame: string | null = null
+    /** the shown message's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
 
     constructor(readonly context: LayerContext, readonly topic: Topic) {
         this.#spheres = new THREE.InstancedMesh(sphere, new THREE.MeshLambertMaterial(), 256)
         this.#spheres.count = 0
         this.#spheres.frustumCulled = false
         this.root.add(this.#spheres, this.#labels.group)
-        const show = (entities: Entity[], frame: string, timestamp: number) => {
+        const show = (entities: Entity[], frame: string, timestamp: number, stamp: number | null = null) => {
             this.#frame = frame
+            this.#stamp = stamp
             this.#labels.begin()
             const matrix = new THREE.Matrix4()
             const count = Math.min(entities.length, 256)
@@ -78,14 +82,14 @@ class LabeledPoints {
                     context.setStatus({ info: "cleared", problem: null })
                     return
                 }
-                show([{ label: topic.name, color: `#${colorFor(topic.name).getHexString()}`, position: new THREE.Vector3(point.x, point.y, point.z) }], message.header?.frame_id ?? "", timestamp)
+                show([{ label: topic.name, color: `#${colorFor(topic.name).getHexString()}`, position: new THREE.Vector3(point.x, point.y, point.z) }], message.header?.frame_id ?? "", timestamp, stampMsOf(message))
             })
         }
     }
 
     update(frame: { fixedFrame: string }) {
         if (this.#frame !== null) {
-            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame)
+            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame, this.#stamp)
         }
     }
 

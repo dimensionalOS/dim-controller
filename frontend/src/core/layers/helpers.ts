@@ -2,14 +2,15 @@
 import * as THREE from "three"
 import { decode, type LcmValue } from "../lcm/lcm.ts"
 import type { LayerContext } from "./registry.ts"
+import { placementMatrix } from "./placement.ts"
 import type { Topic } from "../transport.ts"
 
 /**
- * Sets `object.matrix` to T_fixed_frame and shows it; with no TF path it hides the object and reports why.
- * Returns whether it could be placed.
+ * Sets `object.matrix` to T_fixed_frame as the layer's Placement says (data stamped `stampMs`: core/layers/placement.ts)
+ * and shows it; with no TF path it hides the object and reports why. Returns whether it could be placed.
  */
-export function placeInFixedFrame(context: LayerContext, object: THREE.Object3D, frame: string, fixedFrame: string): boolean {
-    const matrix = context.tf.lookup(frame, fixedFrame)
+export function placeInFixedFrame(context: LayerContext, object: THREE.Object3D, frame: string, fixedFrame: string, stampMs: number | null = null): boolean {
+    const matrix = placeMatrix(context, frame, fixedFrame, stampMs)
     if (!matrix) {
         if (object.visible) {
             object.visible = false
@@ -26,6 +27,11 @@ export function placeInFixedFrame(context: LayerContext, object: THREE.Object3D,
     }
     context.setStatus({ problem: frame === "" ? "no frame_id: drawn in the fixed frame" : null, frame })
     return true
+}
+
+/** T_fixed_frame for this layer's data in `frame` stamped `stampMs`, as its Placement says; null with no TF path. */
+export function placeMatrix(context: LayerContext, frame: string, fixedFrame: string, stampMs: number | null): THREE.Matrix4 | null {
+    return placementMatrix(context, context.placement(), frame, fixedFrame, stampMs)
 }
 
 /** Subscribes to a topic's raw bytes and hands each decoded message (plus the bridge timestamp) to `onMessage`. */

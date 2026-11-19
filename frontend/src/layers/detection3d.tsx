@@ -3,6 +3,7 @@
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
 import { colorFor, placeInFixedFrame, poseMatrix, subscribeDecoded } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { FatLines, pushBox } from "dimos-react/three"
 import { LabelPool } from "dimos-react/three"
 import type { LcmValue } from "../core/lcm/lcm.ts"
@@ -41,6 +42,8 @@ class BoxLayer {
     #labels = new LabelPool()
     #stop: () => void
     #frame: string | null = null
+    /** the shown message's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
 
     constructor(readonly context: LayerContext, readonly topic: Topic, readonly settings: Store<BoxSettings>) {
         this.#lines = new FatLines(context.viewer.resolution, { width: settings.get().width, vertexColors: true })
@@ -52,6 +55,7 @@ class BoxLayer {
         })
         this.#stop = subscribeDecoded(context, topic, { maxHz: 15 }, (message, timestamp) => {
             this.#frame = message.header?.frame_id ?? ""
+            this.#stamp = stampMsOf(message)
             const boxes = boxesOf(topic.type, message)
             this.#lines.clear()
             this.#labels.begin()
@@ -73,7 +77,7 @@ class BoxLayer {
 
     update(frame: { fixedFrame: string }) {
         if (this.#frame !== null) {
-            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame)
+            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame, this.#stamp)
         }
     }
 

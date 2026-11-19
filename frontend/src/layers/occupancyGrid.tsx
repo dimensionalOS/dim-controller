@@ -4,6 +4,7 @@
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
 import { placeInFixedFrame, poseMatrix, subscribeDecoded } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { useStore, type Store } from "../core/store.ts"
 import type { Topic } from "../core/transport.ts"
 import { Field, Select, Slider } from "dimos-react"
@@ -29,6 +30,8 @@ class GridLayer {
     #texture: THREE.DataTexture | null = null
     #stop: () => void
     #frame: string | null = null
+    /** the shown message's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
     #lut = new Uint8Array(256 * 4)
 
     constructor(readonly context: LayerContext, readonly topic: Topic, readonly settings: Store<GridSettings>) {
@@ -76,6 +79,7 @@ class GridLayer {
             return
         }
         this.#frame = grid.header?.frame_id ?? ""
+        this.#stamp = stampMsOf(grid)
         if (!this.#texture || this.#texture.image.width !== width || this.#texture.image.height !== height) {
             this.#texture?.dispose()
             this.#texture = new THREE.DataTexture(new Uint8Array(width * height * 4), width, height)
@@ -114,7 +118,7 @@ class GridLayer {
 
     update(frame: { fixedFrame: string }) {
         if (this.#frame !== null) {
-            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame)
+            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame, this.#stamp)
         }
     }
 

@@ -297,6 +297,8 @@ function Camera3dSettingsEditor({ settings, topic }: { settings: Store<Camera3dS
 
 registerLayer<Camera3dSettings>({
     id: "camera3d",
+    // a video frame carries no header stamp to hold it at: drawn at its frame now
+    placement: false,
     label: "Camera in 3D",
     types: ["sensor_msgs.Image", "sensor_msgs.CompressedImage"],
     defaults: { distance: 1.5, opacity: 0.95, image: true, frustum: true, convention: "auto", depth: DEFAULT_DEPTH_LOOK, undistort: false },

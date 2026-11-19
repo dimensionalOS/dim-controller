@@ -2,6 +2,7 @@
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
 import { colorFor, placeInFixedFrame, subscribeDecoded } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { FatLines } from "dimos-react/three"
 import { useStore, type Store } from "../core/store.ts"
 import type { Topic } from "../core/transport.ts"
@@ -19,6 +20,8 @@ class PathLayer {
     #lines: FatLines
     #stop: () => void
     #frame: string | null = null
+    /** the shown message's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
 
     constructor(readonly context: LayerContext, readonly topic: Topic, readonly settings: Store<PathSettings>) {
         this.#lines = new FatLines(context.viewer.resolution, { width: settings.get().width, color: settings.get().color })
@@ -30,6 +33,7 @@ class PathLayer {
         })
         this.#stop = subscribeDecoded(context, topic, { maxHz: 10 }, (path, timestamp) => {
             this.#frame = path.header?.frame_id ?? ""
+            this.#stamp = stampMsOf(path)
             const lift = settings.get().lift
             this.#lines.clear()
             let previous: { x: number; y: number; z: number } | null = null
@@ -51,7 +55,7 @@ class PathLayer {
 
     update(frame: { fixedFrame: string }) {
         if (this.#frame !== null) {
-            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame)
+            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame, this.#stamp)
         }
     }
 

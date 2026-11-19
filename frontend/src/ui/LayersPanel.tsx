@@ -1,10 +1,11 @@
 // The 3D view menu's layers past its point clouds (ui/ScenePanel.tsx): every other drawable topic, grouped by layer
 // type: a switch (on = subscribed), live info or the problem, and the layer's own settings behind a disclosure.
+import { PLACEMENTS, type Placement } from "../core/layers/placement.ts"
 import { createContext, type ReactNode, useContext, useId, useMemo, useState } from "react"
 import type { ViewerApp } from "../core/app.ts"
 import type { LayerEntry } from "../core/layers/manager.ts"
 import { Store, useStore } from "../core/store.ts"
-import { Toggle } from "dimos-react"
+import { Field, Segmented, Toggle } from "dimos-react"
 import { Icon } from "./icons.tsx"
 import { bandwidthOverrides, setOverride } from "../core/bandwidth.ts"
 import { readLocal, writeLocal } from "../core/videoQuality.ts"
@@ -70,6 +71,17 @@ export function LayerStatusLine({ entry }: { entry: LayerEntry }) {
     return text ? <div className={`layer-status ${entry.status.problem ? "problem" : ""}`}>{text}</div> : null
 }
 
+/** Where the layer's data is drawn (core/layers/placement.ts): every layer type with data of its own has it. */
+function PlacementField({ entry }: { entry: LayerEntry }) {
+    const settings = entry.settings as Store<{ placement?: Placement }>
+    const { placement } = useStore(settings)
+    return (
+        <Field inline label="Placement" title="TF attached: drawn where its frame is now, so it moves with the frame. Instant: drawn where its frame was when the message was stamped, so it stays put (an accumulated cloud always does)">
+            <Segmented size="sm" items={PLACEMENTS} value={placement ?? "attached"} onChange={(next: Placement) => settings.update({ placement: next })} label="placement" />
+        </Field>
+    )
+}
+
 function LayerRow({ app, entry }: { app: ViewerApp; entry: LayerEntry }) {
     const Settings = entry.type.Settings
     const RowControls = entry.type.RowControls
@@ -84,9 +96,10 @@ function LayerRow({ app, entry }: { app: ViewerApp; entry: LayerEntry }) {
             testKey={entry.topic.key}
             below={<LayerStatusLine entry={entry} />}
         >
-            {(RowControls || Settings) && (
+            {(RowControls || Settings || entry.type.placement !== false) && (
                 <>
                     {RowControls && <RowControls settings={entry.settings} topic={entry.topic} />}
+                    {entry.type.placement !== false && <PlacementField entry={entry} />}
                     {Settings && <Settings settings={entry.settings} topic={entry.topic} />}
                 </>
             )}

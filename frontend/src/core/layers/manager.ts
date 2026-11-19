@@ -1,5 +1,6 @@
 // One entry per discovered topic that some layer type draws; an enabled entry has a live instance (subscribed),
 // a disabled one has none (unsubscribed, so it costs no bandwidth).
+import type { Placement } from "./placement.ts"
 import { allLayerTypes, type LayerInstance, type LayerStatus, type LayerType } from "./registry.ts"
 import { layerTypeFor } from "./registry.ts"
 import { persistentStore, Store } from "../store.ts"
@@ -99,6 +100,10 @@ export class LayerManager {
             const saved = this.#enabled.get()[topic.key]
             const enabled = this.#typeEnabled[type.id] ?? saved ?? (type.enabledByDefault?.(topic) ?? true)
             const defaults = typeof type.defaults === "function" ? type.defaults(topic) : structuredClone(type.defaults)
+            // every layer with data of its own keeps a Placement beside its settings (core/layers/placement.ts)
+            if (type.placement !== false) {
+                Object.assign(defaults, { placement: type.placement ?? "attached" })
+            }
             const settings = persistentStore(`lv.layer.${type.id}.${topic.key}`, defaults)
             added.push({ topic, type, enabled, status: {}, settings })
         }
@@ -201,6 +206,7 @@ export class LayerManager {
             get profile() {
                 return manager.profile
             },
+            placement: (): Placement => (entry.type.placement === false ? "attached" : (entry.settings.get() as { placement?: Placement }).placement ?? entry.type.placement ?? "attached"),
             setStatus: (status: LayerStatus) => {
                 const current = this.entries.get().list.find((other) => other.topic.key === key)?.status
                 if (!current || (Object.keys(status) as (keyof LayerStatus)[]).some((field) => current[field] !== status[field])) {

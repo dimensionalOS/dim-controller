@@ -3,6 +3,7 @@
 // the shader, so a new scan costs one buffer upload and nothing is allocated per frame.
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
+import { placeMatrix } from "../core/layers/helpers.ts"
 import { headerFrameId } from "../core/lcm/lcm.ts"
 import { applyLook, GRADIENTS, makePointMaterial, RAMPS } from "dimos-react/three"
 import { Store } from "../core/store.ts"
@@ -417,8 +418,12 @@ class CloudLayer {
         const count = positions.length / 3
         this.#lastCount = count
         const accumulate = settings.mode === "accumulate"
-        // looked up once, as of the scan's own time, then frozen: odom at 50 Hz must not drag a 10 Hz scan along
-        const placement = this.context.tfHistory.lookupAt(this.#frame, this.context.viewer.fixedFrame, timestamp)
+        // Instant (the default): looked up once, as of the scan's own time, then frozen: odom at 50 Hz must not drag a
+        // 10 Hz scan along. Accumulated scans are always that way (each is written into the fixed frame where it was
+        // taken); a latest scan that is TF attached rides its frame instead (update re-places it every frame)
+        const placement = accumulate
+            ? this.context.tfHistory.lookupAt(this.#frame, this.context.viewer.fixedFrame, timestamp)
+            : placeMatrix(this.context, this.#frame, this.context.viewer.fixedFrame, timestamp)
         if (!placement) {
             this.#unplaced()
             return
@@ -545,13 +550,15 @@ class CloudLayer {
     }
 
     update(frame: { now: number; fixedFrame: string }) {
-        if (frame.fixedFrame !== this.#fixedFrame) {
+        const attached = this.context.placement() === "attached" && this.#settings.get().mode !== "accumulate"
+        if (frame.fixedFrame !== this.#fixedFrame || (attached && this.#points.visible)) {
             this.#fixedFrame = frame.fixedFrame
             if (this.#settings.get().mode === "accumulate") {
                 this.#clear()
             } else if (this.#frame !== null && this.#stamp !== null) {
-                // the shown scan re-placed in the new fixed frame, still as of its own time
-                const placement = this.context.tfHistory.lookupAt(this.#frame, frame.fixedFrame, this.#stamp)
+                // the shown scan re-placed: in a new fixed frame, still as of its own time (Instant), or where its
+                // frame is now (TF attached)
+                const placement = placeMatrix(this.context, this.#frame, frame.fixedFrame, this.#stamp)
                 if (placement) {
                     this.#place(placement)
                     this.#material.uniforms.uSensor.value.setFromMatrixPosition(placement)
@@ -669,6 +676,8 @@ function CameraColorEditor({ settings }: { settings: Store<CloudSettings> }) {
 
 registerLayer<CloudSettings>({
     id: "pointcloud",
+    // a scan stays where it was taken (core/layers/placement.ts)
+    placement: "instant",
     label: "Point cloud",
     types: ["sensor_msgs.PointCloud2"],
     // MemWorld's look: lit spheres (a map's at its 10 cm voxel size), lit cubes as the "voxel" style

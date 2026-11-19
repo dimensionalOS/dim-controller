@@ -267,6 +267,8 @@ function RobotModelRows({ entry, layers }: { entry: LayerEntry; layers: LayerMan
 
 registerLayer<RobotModelSettings>({
     id: "robot-model",
+    // posed by tf, link by link: always where tf has it now
+    placement: false,
     label: "Robot model (URDF)",
     types: ["std_msgs.String"],
     names: ["/render_file_request"],

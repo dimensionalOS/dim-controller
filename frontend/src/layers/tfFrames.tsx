@@ -108,6 +108,8 @@ function TfSettingsEditor({ settings }: { settings: Store<TfSettings>; topic: To
 
 registerLayer<TfSettings>({
     id: "tf",
+    // it is tf: nothing to place it by but itself
+    placement: false,
     label: "TF frames",
     types: ["tf2_msgs.TFMessage"],
     defaults: { axesSize: 0.03, names: true, links: true },

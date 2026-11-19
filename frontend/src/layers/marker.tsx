@@ -3,7 +3,8 @@
 // their lifetime runs out, and each is placed by its own header's frame every frame.
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
-import { disposeTree, poseMatrix, rgba, subscribeDecoded } from "../core/layers/helpers.ts"
+import { disposeTree, poseMatrix, rgba, subscribeDecoded, placeMatrix } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { FatLines } from "dimos-react/three"
 import { LabelPool } from "dimos-react/three"
 import type { LcmValue } from "../core/lcm/lcm.ts"
@@ -25,6 +26,8 @@ interface Kept {
     frame: string
     pose: THREE.Matrix4
     expiresAt: number
+    /** the marker's header stamp (ms): where an Instant placement holds it */
+    stamp: number | null
     label?: { text: string; position: THREE.Vector3; color: string }
 }
 
@@ -112,7 +115,7 @@ class MarkerLayer {
         }
         object.matrixAutoUpdate = false
         const lifetime = (marker.lifetime?.sec ?? 0) + (marker.lifetime?.nsec ?? 0) / 1e9
-        const kept: Kept = { object, frame: marker.header?.frame_id ?? "", pose: poseMatrix(marker.pose), expiresAt: lifetime > 0 ? performance.now() + lifetime * 1000 : Infinity }
+        const kept: Kept = { object, frame: marker.header?.frame_id ?? "", pose: poseMatrix(marker.pose), expiresAt: lifetime > 0 ? performance.now() + lifetime * 1000 : Infinity, stamp: stampMsOf(marker) }
         if (marker.type === TYPE.TEXT) {
             const { color } = rgba(marker.color)
             kept.label = { text: marker.text ?? "", position: new THREE.Vector3(), color: `#${color.getHexString()}` }
@@ -237,7 +240,7 @@ class MarkerLayer {
                 this.context.viewer.requestRender()
                 continue
             }
-            const world = this.context.tf.lookup(kept.frame, frame.fixedFrame)
+            const world = placeMatrix(this.context, kept.frame, frame.fixedFrame, kept.stamp)
             kept.object.visible = !!world
             if (!world) {
                 missing.add(kept.frame)

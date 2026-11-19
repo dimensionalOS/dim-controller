@@ -2,6 +2,7 @@
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
 import { colorFor, placeInFixedFrame, poseMatrix, subscribeDecoded } from "../core/layers/helpers.ts"
+import { stampMsOf } from "../core/layers/placement.ts"
 import { FatLines } from "dimos-react/three"
 import { useStore, type Store } from "../core/store.ts"
 import type { Topic } from "../core/transport.ts"
@@ -17,6 +18,8 @@ class PoseArrayLayer {
     #lines: FatLines
     #stop: () => void
     #frame: string | null = null
+    /** the shown message's header stamp (ms): where an Instant placement holds it */
+    #stamp: number | null = null
 
     constructor(readonly context: LayerContext, readonly topic: Topic, readonly settings: Store<ArrowSettings>) {
         this.#lines = new FatLines(context.viewer.resolution, { width: 2.5, color: settings.get().color })
@@ -48,6 +51,7 @@ class PoseArrayLayer {
         })
         this.#stop = subscribeDecoded(context, topic, { maxHz: 10 }, (message, timestamp) => {
             this.#frame = message.header?.frame_id ?? ""
+            this.#stamp = stampMsOf(message)
             last = message
             draw()
             context.setStatus({ info: `${message.poses?.length ?? 0} poses · ${this.#frame || "no frame"}` })
@@ -57,7 +61,7 @@ class PoseArrayLayer {
 
     update(frame: { fixedFrame: string }) {
         if (this.#frame !== null) {
-            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame)
+            placeInFixedFrame(this.context, this.root, this.#frame, frame.fixedFrame, this.#stamp)
         }
     }
 
