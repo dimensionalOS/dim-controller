@@ -577,8 +577,11 @@ export function snapBox(box: Rect, guides: Rect[], threshold: number): Rect {
 
 export const WORKSPACE_KEY = "lv.workspace"
 
+/** The saved arrangement as saved (every use normalizes it for the panels there are then), so a plot or camera that
+ * isn't known yet at load keeps its place; nothing saved is the default. */
 export function loadArrangement(ids: string[]): Arrangement {
-    return normalizeArrangement(readLocal<Partial<Arrangement> | null>(WORKSPACE_KEY, null), ids)
+    const saved = readLocal<Partial<Arrangement> | null>(WORKSPACE_KEY, null)
+    return saved && typeof saved === "object" ? saved as Arrangement : defaultArrangement(ids)
 }
 
 export function saveArrangement(arrangement: Arrangement) {

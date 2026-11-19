@@ -96,7 +96,14 @@ function useLayoutSync(mobile: boolean, ids: string[]) {
             workspace.set({ arrangement: next })
         }
     }, [remote])
+    // on load a saved backend layout wins: this page's local copy is only sent once it changes after that
+    const loading = useRef(true)
     useEffect(() => {
+        const first = loading.current
+        loading.current = false
+        if (first && setting.get().arrangement) {
+            return
+        }
         const text = JSON.stringify(local)
         if (text !== sent.current && text !== JSON.stringify(setting.get().arrangement)) {
             sent.current = text
@@ -113,8 +120,11 @@ export function useWorkspace(ids: string[], mobile: boolean): WorkspaceApi {
     const arrangement = useMemo(() => normalizeArrangement(saved, ids), [saved, idsKey])
     // a camera added or gone: the saved arrangement follows
     useEffect(() => {
-        if (JSON.stringify(arrangement) !== JSON.stringify(saved)) {
-            workspace.set({ arrangement })
+        // the store's current value, not this render's: the backend's layout may have just been taken (useLayoutSync)
+        const current = workspace.get().arrangement
+        const next = normalizeArrangement(current, ids)
+        if (JSON.stringify(next) !== JSON.stringify(current)) {
+            workspace.set({ arrangement: next })
         }
     }, [arrangement, saved])
     const view = useStore(workspaceView)
