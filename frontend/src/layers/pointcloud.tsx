@@ -111,7 +111,6 @@ export let lastCloudShape: {
     frame: string | null
 } | null = null
 
-import { forgetShown, showing } from "../core/displayTime.ts"
 
 const FRAME_RECHECK_MS = 30_000
 
@@ -482,8 +481,6 @@ class CloudLayer {
         } else {
             this.#filled = count
             this.#place(placement)
-            // the view's instant: what else is posed from tf is posed at the time this was taken
-            showing(timestamp)
         }
         this.#material.uniforms.uSensor.value.setFromMatrixPosition(placement)
         this.#geometry.setDrawRange(0, this.#filled)
@@ -504,7 +501,6 @@ class CloudLayer {
 
     /** No TF path: a latest scan is hidden (it would sit at the wrong pose), kept scans stay where they were placed. */
     #unplaced() {
-        forgetShown() // nothing stamped is being shown, so stop pinning everything else to its time
         if (this.#settings.get().mode === "latest" && this.#points.visible) {
             this.#points.visible = false
             this.context.viewer.requestRender()
