@@ -31,7 +31,7 @@ class PathLayer {
             this.#lines.material.linewidth = settings.get().width
             context.viewer.requestRender()
         })
-        this.#stop = subscribeDecoded(context, topic, { maxHz: 10 }, (path, timestamp) => {
+        this.#stop = subscribeDecoded(context, topic, { maxHz: 10, reliable: true }, (path, timestamp) => {
             this.#frame = path.header?.frame_id ?? ""
             this.#stamp = stampMsOf(path)
             const lift = settings.get().lift
@@ -78,6 +78,7 @@ function PathSettingsEditor({ settings }: { settings: Store<PathSettings>; topic
 registerLayer<PathSettings>({
     id: "path",
     label: "Path",
+    group: "Pose + trail",
     types: ["nav_msgs.Path"],
     defaults: (topic) => ({ color: `#${colorFor(topic.name + "path").getHexString()}`, width: 4, lift: 0.03 }),
     create: (context, topic, settings) => new PathLayer(context, topic, settings),

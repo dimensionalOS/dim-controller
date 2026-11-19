@@ -8,6 +8,7 @@ import type { LayerEntry } from "../core/layers/manager.ts"
 import { Store, useStore } from "../core/store.ts"
 import { Field, Segmented, Toggle } from "dimos-react"
 import { Icon } from "./icons.tsx"
+import { createPortal } from "react-dom"
 import { bandwidthOverrides, setOverride } from "../core/bandwidth.ts"
 import { readLocal, writeLocal } from "../core/videoQuality.ts"
 import { matchesQuery } from "../core/topicFilter.ts"
@@ -78,18 +79,41 @@ export function LayerStatusLine({ entry }: { entry: LayerEntry }) {
 export function PlacementField({ entry }: { entry: LayerEntry }) {
     const settings = entry.settings as Store<{ placement?: Placement }>
     const { placement } = useStore(settings)
-    const [help, setHelp] = useState(false)
+    // the (?)'s explanation floats beside it like a context menu (no row grows): on hover with a mouse, on tap otherwise
+    const [tip, setTip] = useState<{ left: number; top: number } | null>(null)
+    const show = (button: HTMLElement) => {
+        const box = button.getBoundingClientRect()
+        setTip({ left: Math.max(8, Math.min(box.left, innerWidth - 268)), top: box.bottom + 6 })
+    }
     const label = (
         <>
             Placement
-            <button type="button" className="help-dot" aria-label="what placement means" aria-expanded={help} onClick={(event) => { event.preventDefault(); setHelp(!help) }}>?</button>
+            <button
+                type="button"
+                className="help-dot"
+                aria-label="what placement means"
+                aria-expanded={!!tip}
+                onPointerEnter={(event) => event.pointerType === "mouse" && show(event.currentTarget)}
+                onPointerLeave={(event) => event.pointerType === "mouse" && setTip(null)}
+                onClick={(event) => {
+                    event.preventDefault()
+                    if ((event.nativeEvent as PointerEvent).pointerType !== "mouse") {
+                        tip ? setTip(null) : show(event.currentTarget)
+                    }
+                }}
+            >
+                ?
+            </button>
+            {tip && createPortal(
+                <div className="help-tip" role="tooltip" style={tip}>
+                    This is a really minor visual optimization. Point clouds should be Instant: they get their position from TF, but only at the instant they were taken, so they don't move with the robot. Things like limbs are Attached to TF: they move with the robot.
+                </div>,
+                document.body,
+            )}
         </>
     )
-    const hint = help
-        ? "This is a really minor visual optimization. Point clouds should be Instant: they get their position from TF, but only at the instant they were taken, so they don't move with the robot. Things like limbs are Attached to TF: they move with the robot."
-        : undefined
     return (
-        <Field inline className="placement-field" label={label} hint={hint}>
+        <Field inline label={label}>
             <Segmented size="sm" items={PLACEMENTS} value={placement ?? "attached"} onChange={(next: Placement) => settings.update({ placement: next })} label="placement" />
         </Field>
     )
@@ -154,7 +178,7 @@ export function LayerList({ app, skip, heads = {}, lead = [], query = "" }: { ap
     const connection = useStore(app.connection.status)
     const groups = new Map<string, LayerEntry[]>(Object.keys(heads).filter((label) => !searching || matchesQuery(query, label)).map((label) => [label, []]))
     for (const entry of list) {
-        groups.set(entry.type.label, [...(groups.get(entry.type.label) ?? []), entry])
+        groups.set(entry.type.group ?? entry.type.label, [...(groups.get(entry.type.group ?? entry.type.label) ?? []), entry])
     }
     const ordered = [...lead.filter((label) => groups.has(label)).map((label) => [label, groups.get(label)!] as const), ...[...groups].filter(([label]) => !lead.includes(label))]
     const { collapsed: folded, toggle } = useCollapsedGroups()

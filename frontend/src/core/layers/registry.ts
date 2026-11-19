@@ -54,6 +54,8 @@ export interface LayerType<Settings extends object = object> {
     id: string
     /** shown in the layer list */
     label: string
+    /** the layer list's group it's drawn under, when not its own label's */
+    group?: string
     /** dimos message types it draws, e.g. ["sensor_msgs.PointCloud2"] */
     types: string[]
     /** only these topic names (e.g. ["/scene_info"]): for a generic type like std_msgs.String */

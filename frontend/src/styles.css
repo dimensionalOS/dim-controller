@@ -432,8 +432,7 @@ html[data-corners="sharp"] .panel-head::before { top: 0; bottom: 0; } /* sharp c
 .layer-settings > .dr-field--inline { justify-content: flex-start; flex-wrap: nowrap; }
 .layer-settings > .dr-field--inline > .dr-field-label { min-width: 72px; }
 .layer-settings > .dr-field--inline .cloud-size { flex: 1 1 auto; }
-.layer-settings > .placement-field { flex-wrap: wrap; row-gap: 6px; }
-.placement-field .dr-field-hint { line-height: 1.4; }
+.help-tip { position: fixed; z-index: 1000; width: 260px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--popover, var(--card)); color: var(--fg); font-size: 12px; line-height: 1.4; box-shadow: 0 6px 20px rgb(0 0 0 / 0.35); pointer-events: none; }
 .help-dot { all: unset; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 5px; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; color: var(--muted-fg); cursor: pointer; vertical-align: 1px; }
 .help-dot:hover, .help-dot[aria-expanded="true"] { color: var(--fg); border-color: var(--muted-fg); }
 /* a stream's name tinted by its message type (the same hue for every stream of that type: core/hashHue.ts) */
