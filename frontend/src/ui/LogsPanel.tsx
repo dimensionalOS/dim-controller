@@ -7,6 +7,7 @@
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Card, LOG_LEVELS, SearchInput, Segmented, splitRecord, TextInput, Traceback } from "dimos-react"
 import { useStore } from "../core/store.ts"
+import { hashHue } from "../core/hashHue.ts"
 import { filterRecords, type LogFilter, logFeed, type LoggedRecord } from "../core/logFeed.ts"
 import { readLocal, writeLocal } from "../core/videoQuality.ts"
 import { useWorkspaceApi } from "./Workspace.tsx"
@@ -27,14 +28,6 @@ const keys = new WeakMap<LoggedRecord, number>()
 let nextKey = 0
 const keyOf = (record: LoggedRecord) => keys.get(record) ?? (keys.set(record, ++nextKey), nextKey)
 
-/** a logger's own hue, from its name (FNV-1a), so the same logger is always the same color */
-export function loggerHue(name: string): number {
-    let hash = 0x811c9dc5
-    for (let index = 0; index < name.length; index++) {
-        hash = Math.imul(hash ^ name.charCodeAt(index), 0x01000193)
-    }
-    return (hash >>> 0) % 360
-}
 
 /** whether the theme's background is dark (the loggers' colors are lighter on it) */
 function useDarkTheme(): boolean {
@@ -51,7 +44,7 @@ function useDarkTheme(): boolean {
     return dark
 }
 
-const loggerColor = (name: string, dark: boolean) => `hsl(${loggerHue(name)} 60% ${dark ? 66 : 36}%)`
+const loggerColor = (name: string, dark: boolean) => `hsl(${hashHue(name)} 60% ${dark ? 66 : 36}%)`
 
 /** One record: a line (time, level, logger, event, what unfolds), and unfolded, its fields and its traceback. */
 function Record({ record, open, dark, onToggle, onLevel, onGroup, picker }: { record: LoggedRecord; open: boolean; dark: boolean; onToggle: () => void; onLevel: () => void; onGroup: () => void; picker: ReactNode }) {

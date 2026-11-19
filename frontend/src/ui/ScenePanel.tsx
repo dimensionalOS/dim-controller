@@ -18,7 +18,7 @@ import { GRADIENTS, ViewCube } from "dimos-react/three"
 import { COLOR_MODES, type PointLook } from "../core/render/rendering.ts"
 import type { CloudSettings } from "../layers/pointcloud.tsx"
 import { Icon } from "./icons.tsx"
-import { Button, Card, NumberInput, SearchInput, Segmented, Select, Slider, Tabs, Toggle } from "dimos-react"
+import { Button, Card, Field, NumberInput, SearchInput, Segmented, Select, Slider, Tabs, Toggle } from "dimos-react"
 import { popoverPosition } from "./panelDrag.ts"
 import { Panel } from "./Panel.tsx"
 import { DriveHint } from "./KeyOverlay.tsx"
@@ -28,7 +28,7 @@ import { panelTitle } from "./commands.ts"
 import { useWorkspaceApi } from "./Workspace.tsx"
 import { useDockActions } from "./dockActions.ts"
 import { Unavailable } from "./Unavailable.tsx"
-import { GroupTitle, LayerList, useCollapsedGroups } from "./LayersPanel.tsx"
+import { GroupTitle, LayerList, PlacementField, Row, useCollapsedGroups } from "./LayersPanel.tsx"
 import { FILTER_OVER, matchesQuery } from "../core/topicFilter.ts"
 import { ManipActions, ManipPanel } from "./ManipPanel.tsx"
 import { ArmPanel } from "./ArmPanel.tsx"
@@ -257,9 +257,11 @@ function CloudMenu({ app, anchor, onClose }: { app: ViewerApp; anchor: HTMLEleme
     return createPortal(
         <Card padded={false} className="cloud-menu" role="menu" aria-label="3D view settings" style={popoverPosition(anchor, 320)}>
             {list.length + 1 > FILTER_OVER && <SearchInput className="cloud-search" value={query} onChange={setQuery} placeholder="Filter topics…" aria-label="Filter the 3D view's topics" />}
-            {(!searching || clouds.length > 0) && <GroupTitle label={CLOUDS_LABEL} count={clouds.length} collapsed={cloudsFolded} onToggle={() => toggle(CLOUDS_LABEL)} />}
-            {!cloudsFolded && !searching && !clouds.length && <p className="cloud-empty">No PointCloud2 on the bus yet.</p>}
-            {!cloudsFolded && clouds.map((entry) => <CloudRow key={entry.topic.key} app={app} entry={entry} rate={rates[entry.topic.key]} />)}
+            <section className={`layer-group cloud-group ${cloudsFolded ? "collapsed" : ""}`}>
+                {(!searching || clouds.length > 0) && <GroupTitle label={CLOUDS_LABEL} count={clouds.length} collapsed={cloudsFolded} onToggle={() => toggle(CLOUDS_LABEL)} />}
+                {!cloudsFolded && !searching && !clouds.length && <p className="cloud-empty">No PointCloud2 on the bus yet.</p>}
+                {!cloudsFolded && clouds.map((entry) => <CloudRow key={entry.topic.key} app={app} entry={entry} rate={rates[entry.topic.key]} />)}
+            </section>
             <LayerList app={app} skip={isCloud} lead={[labelOf("graph")]} heads={{ [labelOf("camera3d")]: <CamerasIn3dRow app={app} /> }} query={query} />
         </Card>,
         document.body,
@@ -291,22 +293,29 @@ function CloudRow({ app, entry, rate }: { app: ViewerApp; entry: LayerEntry; rat
     const preset = CLOUD_PRESETS.find((other) => other.id === quality)!
     // the layer type's own row controls (a point cloud's accumulate + scan count), as the Layers list shows them
     const RowControls = entry.type.RowControls
+    // one row like the rest (ui/LayersPanel.tsx Row): its settings fold away, one open at a time
     return (
-        <div className={`cloud-row ${entry.enabled ? "on" : ""}`} data-key={entry.topic.key}>
-            <div className="cloud-line">
-                <Toggle value={entry.enabled} onChange={(enabled) => app.layers.setEnabled(entry.topic.key, enabled)} />
-                <span className="cloud-name" title={entry.topic.key}>{entry.topic.name}</span>
-                <span className="cloud-rate">{entry.enabled && rate ? `${formatCount(rate.pointsPerSecond)} pts/s · ${formatBytes(rate.bytesPerSecond)}/s` : entry.enabled ? "…" : "off"}</span>
-            </div>
-            {entry.enabled && (
-                <div className="cloud-controls">
-                    <div className="cloud-presets" role="radiogroup" aria-label={`${entry.topic.name} bandwidth`} title={preset.about}>
-                        {CLOUD_PRESETS.map((option) => (
-                            <button key={option.id} type="button" role="radio" aria-checked={quality === option.id} className={`cloud-preset ${quality === option.id ? "on" : ""}`} title={option.about} onClick={() => setCloudQuality(entry.topic.key, option.id as CloudQuality)}>
-                                {option.id === "low" ? "Low" : option.label}
-                            </button>
-                        ))}
-                    </div>
+        <Row
+            value={entry.enabled}
+            onChange={(enabled) => app.layers.setEnabled(entry.topic.key, enabled)}
+            name={entry.topic.name}
+            kind={entry.topic.type}
+            title={entry.topic.key}
+            className="cloud-row"
+            testKey={entry.topic.key}
+            extra={<span className="cloud-rate">{entry.enabled && rate ? `${formatCount(rate.pointsPerSecond)} pts/s · ${formatBytes(rate.bytesPerSecond)}/s` : entry.enabled ? "…" : "off"}</span>}
+        >
+            <Field inline label="Bandwidth" title={preset.about}>
+                <div className="cloud-presets" role="radiogroup" aria-label={`${entry.topic.name} bandwidth`}>
+                    {CLOUD_PRESETS.map((option) => (
+                        <button key={option.id} type="button" role="radio" aria-checked={quality === option.id} className={`cloud-preset ${quality === option.id ? "on" : ""}`} title={option.about} onClick={() => setCloudQuality(entry.topic.key, option.id as CloudQuality)}>
+                            {option.id === "low" ? "Low" : option.label}
+                        </button>
+                    ))}
+                </div>
+            </Field>
+            <Field inline label="Color">
+                <div className="cloud-field">
                     <Select size="sm" className="cloud-color" value={look.colorMode} aria-label={`${entry.topic.name} color by`} options={COLOR_MODES} onChange={(colorMode) => setLook({ colorMode })} />
                     {look.colorMode === "clear" ? null : look.colorMode === "solid"
                         ? (
@@ -318,11 +327,20 @@ function CloudRow({ app, entry, rate }: { app: ViewerApp; entry: LayerEntry; rat
                         : (
                             <Select size="sm" className="cloud-color" value={look.gradient} aria-label={`${entry.topic.name} colormap`} options={GRADIENTS} onChange={(gradient) => setLook({ gradient })} />
                         )}
-                    <Segmented size="sm" className="cloud-style" label={`${entry.topic.name} point shape`} items={[["voxel", "Voxels"], ["disc", "Spheres"]]} value={look.style === "disc" ? "disc" : "voxel"} onChange={(style) => setLook({ style: style as PointLook["style"] })} />
-                    <Slider className="cloud-size" title="point size" min={0.01} max={0.5} step={0.01} value={look.size} aria-label={`${entry.topic.name} point size`} format={(size) => `${Math.round(size * 100)} cm`} onChange={(size) => setLook({ size })} />
-                    {RowControls && <RowControls settings={entry.settings} topic={entry.topic} />}
                 </div>
+            </Field>
+            <Field inline label="Shape">
+                <Segmented size="sm" className="cloud-style" label={`${entry.topic.name} point shape`} items={[["voxel", "Voxels"], ["disc", "Spheres"]]} value={look.style === "disc" ? "disc" : "voxel"} onChange={(style) => setLook({ style: style as PointLook["style"] })} />
+            </Field>
+            <Field inline label="Point size">
+                <Slider className="cloud-size" title="point size" min={0.01} max={0.5} step={0.01} value={look.size} aria-label={`${entry.topic.name} point size`} format={(size) => `${Math.round(size * 100)} cm`} onChange={(size) => setLook({ size })} />
+            </Field>
+            {RowControls && (
+                <Field inline label="History">
+                    <RowControls settings={entry.settings} topic={entry.topic} />
+                </Field>
             )}
-        </div>
+            <PlacementField entry={entry} />
+        </Row>
     )
 }

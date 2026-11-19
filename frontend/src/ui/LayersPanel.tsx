@@ -1,7 +1,8 @@
 // The 3D view menu's layers past its point clouds (ui/ScenePanel.tsx): every other drawable topic, grouped by layer
 // type: a switch (on = subscribed), live info or the problem, and the layer's own settings behind a disclosure.
 import { PLACEMENTS, type Placement } from "../core/layers/placement.ts"
-import { createContext, type ReactNode, useContext, useId, useMemo, useState } from "react"
+import { createContext, type CSSProperties, type ReactNode, useContext, useId, useMemo, useState } from "react"
+import { hashHue } from "../core/hashHue.ts"
 import type { ViewerApp } from "../core/app.ts"
 import type { LayerEntry } from "../core/layers/manager.ts"
 import { Store, useStore } from "../core/store.ts"
@@ -19,11 +20,13 @@ const COLLAPSED_KEY = "lv.layers.collapsed"
 const OpenRow = createContext(new Store<{ id: string | null }>({ id: null }))
 
 /** One switchable row: a toggle, the name (and type), what's below it (status), and settings behind a disclosure. */
-export function Row({ value, onChange, name, type, title, className = "", testKey, below, extra, children }: {
+export function Row({ value, onChange, name, type, kind, title, className = "", testKey, below, extra, children }: {
     value: boolean
     onChange: (on: boolean) => void
     name: string
     type?: string
+    /** the message type: colors the switch, the same hue for every stream of that type (core/hashHue.ts) */
+    kind?: string
     title?: string
     className?: string
     testKey?: string
@@ -38,10 +41,10 @@ export function Row({ value, onChange, name, type, title, className = "", testKe
     const setOpen = (on: boolean) => siblings.set({ id: on ? id : null })
     const childRows = useMemo(() => new Store<{ id: string | null }>({ id: null }), [])
     return (
-        <div className={`layer-row ${value ? "on" : ""} ${className}`} data-key={testKey}>
+        <div className={`layer-row ${kind ? "kinded" : ""} ${value ? "on" : ""} ${open && children ? "open" : ""} ${className}`} data-key={testKey} style={kind ? { "--kind-hue": hashHue(kind) } as CSSProperties : undefined}>
             <div className="layer-line">
                 <Toggle aria-label={name} value={value} onChange={onChange} />
-                <button type="button" className="layer-name" onClick={() => setOpen(!open)} disabled={!children} title={title}>
+                <button type="button" className="layer-name" onClick={() => setOpen(!open)} disabled={!children} title={title} aria-expanded={children ? open : undefined}>
                     <span className="topic-name">{name}</span>
                     {type && <span className="topic-type">{type}</span>}
                     {children && <span className={`chevron ${open ? "open" : ""}`}><Icon name="chevron-right" size={14} /></span>}
@@ -72,11 +75,21 @@ export function LayerStatusLine({ entry }: { entry: LayerEntry }) {
 }
 
 /** Where the layer's data is drawn (core/layers/placement.ts): every layer type with data of its own has it. */
-function PlacementField({ entry }: { entry: LayerEntry }) {
+export function PlacementField({ entry }: { entry: LayerEntry }) {
     const settings = entry.settings as Store<{ placement?: Placement }>
     const { placement } = useStore(settings)
+    const [help, setHelp] = useState(false)
+    const label = (
+        <>
+            Placement
+            <button type="button" className="help-dot" aria-label="what placement means" aria-expanded={help} onClick={(event) => { event.preventDefault(); setHelp(!help) }}>?</button>
+        </>
+    )
+    const hint = help
+        ? "This is a really minor visual optimization. Point clouds should be Instant: they get their position from TF, but only at the instant they were taken, so they don't move with the robot. Things like limbs are Attached to TF: they move with the robot."
+        : undefined
     return (
-        <Field inline label="Placement" title="TF attached: drawn where its frame is now, so it moves with the frame. Instant: drawn where its frame was when the message was stamped, so it stays put (an accumulated cloud always does)">
+        <Field inline className="placement-field" label={label} hint={hint}>
             <Segmented size="sm" items={PLACEMENTS} value={placement ?? "attached"} onChange={(next: Placement) => settings.update({ placement: next })} label="placement" />
         </Field>
     )
@@ -91,6 +104,7 @@ function LayerRow({ app, entry }: { app: ViewerApp; entry: LayerEntry }) {
             onChange={(enabled) => app.layers.setEnabled(entry.topic.key, enabled)}
             name={entry.topic.name}
             type={entry.topic.type.split(".")[1]}
+            kind={entry.topic.type}
             title={entry.topic.key}
             className={entry.status.problem ? "problem" : ""}
             testKey={entry.topic.key}
@@ -99,8 +113,8 @@ function LayerRow({ app, entry }: { app: ViewerApp; entry: LayerEntry }) {
             {(RowControls || Settings || entry.type.placement !== false) && (
                 <>
                     {RowControls && <RowControls settings={entry.settings} topic={entry.topic} />}
-                    {entry.type.placement !== false && <PlacementField entry={entry} />}
                     {Settings && <Settings settings={entry.settings} topic={entry.topic} />}
+                    {entry.type.placement !== false && <PlacementField entry={entry} />}
                 </>
             )}
         </Row>

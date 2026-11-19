@@ -420,7 +420,7 @@ class CloudLayer {
         const accumulate = settings.mode === "accumulate"
         // Instant (the default): looked up once, as of the scan's own time, then frozen: odom at 50 Hz must not drag a
         // 10 Hz scan along. Accumulated scans are always that way (each is written into the fixed frame where it was
-        // taken); a latest scan that is TF attached rides its frame instead (update re-places it every frame)
+        // taken); a latest scan that is Attached rides its frame instead (update re-places it every frame)
         const placement = accumulate
             ? this.context.tfHistory.lookupAt(this.#frame, this.context.viewer.fixedFrame, timestamp)
             : placeMatrix(this.context, this.#frame, this.context.viewer.fixedFrame, timestamp)
@@ -557,7 +557,7 @@ class CloudLayer {
                 this.#clear()
             } else if (this.#frame !== null && this.#stamp !== null) {
                 // the shown scan re-placed: in a new fixed frame, still as of its own time (Instant), or where its
-                // frame is now (TF attached)
+                // frame is now (Attached)
                 const placement = placeMatrix(this.context, this.#frame, frame.fixedFrame, this.#stamp)
                 if (placement) {
                     this.#place(placement)

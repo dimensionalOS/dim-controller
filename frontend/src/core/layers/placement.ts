@@ -1,4 +1,4 @@
-// Where a 3D layer's data is drawn, per layer (the Layers list's "Placement" row): TF attached rides its frame (the
+// Where a 3D layer's data is drawn, per layer (the Layers list's "Placement" row): Attached rides its frame (the
 // latest tf, every frame, so it moves as the frame does), Instant stays where its frame was when the message was
 // stamped (tf's history at the header's stamp, so a scan of a wall stays on the wall while the robot drives past).
 // One lookup for every layer: placementMatrix. Pure apart from the tf it reads: test/placement.test.ts.
@@ -8,7 +8,7 @@ import type { TfHistory } from "../tfHistory.ts"
 
 export type Placement = "attached" | "instant"
 
-export const PLACEMENTS: readonly (readonly [Placement, string])[] = [["attached", "TF attached"], ["instant", "Instant"]]
+export const PLACEMENTS: readonly (readonly [Placement, string])[] = [["attached", "Attached"], ["instant", "Instant"]]
 
 /** A message header's stamp in ms (tf's clock, as tf itself is recorded), null without one. */
 // deno-lint-ignore no-explicit-any

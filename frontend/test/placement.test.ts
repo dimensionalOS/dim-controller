@@ -1,4 +1,4 @@
-// Where a 3D layer's data is drawn (core/layers/placement.ts): TF attached is tf's latest, Instant is tf as of the
+// Where a 3D layer's data is drawn (core/layers/placement.ts): Attached is tf's latest, Instant is tf as of the
 // message's own stamp (tf's latest when it has none).
 import { assertEquals } from "jsr:@std/assert@1"
 import * as THREE from "three"
@@ -19,7 +19,7 @@ Deno.test("a header's stamp in ms, none without one", () => {
     assertEquals(stampMsOf({}), null)
 })
 
-Deno.test("TF attached is tf's latest; Instant is tf as of the stamp, its latest without one", () => {
+Deno.test("Attached is tf's latest; Instant is tf as of the stamp, its latest without one", () => {
     assertEquals(placementMatrix(tf, "attached", "lidar", "map", 2500), latest)
     assertEquals(placementMatrix(tf, "instant", "lidar", "map", 2500), then)
     assertEquals(asked, [2500])

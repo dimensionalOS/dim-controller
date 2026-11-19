@@ -348,20 +348,19 @@ html[data-corners="sharp"] .panel-head::before { top: 0; bottom: 0; } /* sharp c
 .snapshot-actions { display: inline-flex; align-items: center; gap: 4px; }
 .snapshot-actions a.dr-btn { text-decoration: none; }
 .snapshot-full { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; object-fit: contain; }
-.cloud-menu { padding: 4px; display: flex; flex-direction: column; gap: 2px; box-shadow: var(--shadow-md); max-height: min(70vh, 520px); overflow-y: auto; max-width: calc(100vw - 16px); }
+.cloud-menu { padding: 6px; display: flex; flex-direction: column; gap: 4px; box-shadow: var(--shadow-md); max-height: min(70vh, 520px); overflow-y: auto; max-width: calc(100vw - 16px); }
 .cloud-empty { font-size: 12px; color: var(--muted-fg); padding: 4px 8px 8px; margin: 0; }
-.cloud-row { padding: 6px 8px; border: 1px solid transparent; }
-.cloud-row.on { border-color: var(--border); }
+.cameras-3d-row { padding: 6px 8px; }
 .cloud-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cloud-name { font: 600 12px var(--sans); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
 .cloud-rate { font: 10px var(--mono); color: var(--muted-fg); white-space: nowrap; }
-.cloud-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.cloud-field { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .cloud-presets { display: flex; border: 1px solid var(--border); }
 .cloud-preset { all: unset; cursor: pointer; font-size: 11px; padding: 3px 7px; color: var(--muted-fg); }
 .cloud-preset + .cloud-preset { border-left: 1px solid var(--border); }
 .cloud-preset:hover, .cloud-preset:focus-visible { color: var(--fg); background: var(--accent); }
 .cloud-preset.on { color: var(--fg); background: var(--accent); box-shadow: inset 0 -2px 0 var(--primary); }
-.cloud-controls .dr-select.cloud-color { width: auto; flex: 0 1 auto; padding: 2px 28px 2px 6px; font-size: 11px; background-position: right 12px center, right 7px center; }
+.cloud-field .dr-select.cloud-color { width: auto; flex: 0 1 auto; padding: 2px 28px 2px 6px; font-size: 11px; background-position: right 12px center, right 7px center; }
 .cloud-opacity { width: 72px; flex: none; }
 .cloud-solid { width: 28px; height: 22px; padding: 0; border: 1px solid var(--border); background: none; }
 .cloud-size { display: flex; align-items: center; gap: 6px; flex: 1 1 120px; font: 10px var(--mono); color: var(--muted-fg); }
@@ -418,7 +417,31 @@ html[data-corners="sharp"] .panel-head::before { top: 0; bottom: 0; } /* sharp c
 .layer-group-title:hover { color: var(--fg); }
 .layer-group-title .chevron { margin-left: 0; display: inline-flex; }
 .layer-group-count { margin-left: auto; font-variant-numeric: tabular-nums; }
-.layer-row { border-radius: var(--radius); padding: 3px 4px; }
+/* each group: a header bar, its rows under it, and a clear gap before the next */
+.layers .layer-group + .layer-group, .cloud-group + .layers { margin-top: 12px; }
+.layer-group-title { padding: 5px 8px; margin: 0 0 4px; border-radius: 5px; background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
+.layer-group-title:hover { background: color-mix(in srgb, var(--fg) 11%, transparent); }
+.layer-group.collapsed .layer-group-title { margin-bottom: 0; }
+.layer-group:not(.collapsed) { padding-bottom: 12px; }
+.layer-row { border-radius: var(--radius); padding: 3px 6px; border: 1px solid transparent; }
+/* the open row (one at a time): its line and its settings in one bordered card */
+.layer-row.open { border-color: var(--border); background: var(--card); padding: 6px 8px 10px; margin: 4px 0; box-shadow: var(--shadow-sm, none); }
+.layer-row.open > .layer-line { padding-bottom: 6px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.layer-row.open .layer-settings { margin: 0; padding: 0; border-left: 0; display: flex; flex-direction: column; gap: 8px; }
+/* an open row's settings: one labeled line each, labels in a column, controls left-aligned after them */
+.layer-settings > .dr-field--inline { justify-content: flex-start; flex-wrap: nowrap; }
+.layer-settings > .dr-field--inline > .dr-field-label { min-width: 72px; }
+.layer-settings > .dr-field--inline .cloud-size { flex: 1 1 auto; }
+.layer-settings > .placement-field { flex-wrap: wrap; row-gap: 6px; }
+.placement-field .dr-field-hint { line-height: 1.4; }
+.help-dot { all: unset; display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 5px; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; color: var(--muted-fg); cursor: pointer; vertical-align: 1px; }
+.help-dot:hover, .help-dot[aria-expanded="true"] { color: var(--fg); border-color: var(--muted-fg); }
+/* a stream's name tinted by its message type (the same hue for every stream of that type: core/hashHue.ts) */
+/* a stream's switch takes its message type's hue: filled when on, outlined when off */
+.layer-row.kinded .dr-toggle-track { border-color: hsl(var(--kind-hue) 55% 50% / 0.7); }
+.layer-row.kinded .dr-toggle input:checked + .dr-toggle-track,
+:root[data-dr-dark] .layer-row.kinded .dr-toggle input:checked + .dr-toggle-track { background: hsl(var(--kind-hue) 60% 45%); border-color: hsl(var(--kind-hue) 60% 45%); }
+:root[data-dr-dark] .layer-row.kinded .dr-toggle input:checked + .dr-toggle-track .dr-toggle-knob { background: #fff; box-shadow: none; }
 /* a URDF's own groups, under its row: they belong to it */
 .layer-subrows { margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border); }
 .layer-subrows-label { display: block; font: 10px var(--mono); color: var(--muted-fg); text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 4px; }
