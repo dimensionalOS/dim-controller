@@ -14,7 +14,10 @@ export interface RpcButton {
     doc: string
 }
 
-type LiveModule = { id: string; rpcs?: { name: string; doc?: string; params?: unknown[] | null }[] }
+type LiveModule = { id: string; rpcs?: { name: string; doc?: string; params?: unknown[] | null; return_type?: string | null }[] }
+
+/** what it returns, as the order the bar lists it in: nothing, then a bool, then anything else (or not annotated) */
+const returnRank = (returnType: string | null | undefined) => returnType === "None" ? 0 : returnType === "bool" ? 1 : 2
 
 export const rpcButtons = new Store<{ buttons: RpcButton[] }>({ buttons: [] })
 
@@ -22,13 +25,17 @@ const gatewayUrl = (path: string) => new URL(`../../gateways/dimos/${path}`, loc
 
 export const rpcLabel = (name: string) => name.split("_").filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" ")
 
-/** Every RPC the scan saw take no parameters (params null = not scanned: its arguments are unknown, so no button). */
+/** Every RPC the scan saw take no parameters (params null = not scanned: its arguments are unknown, so no button), those
+ * returning nothing first, then a bool, then the rest. */
 export function zeroArgRpcs(modules: LiveModule[]): RpcButton[] {
-    return modules.flatMap((module) =>
-        (module.rpcs ?? [])
-            .filter((rpc) => Array.isArray(rpc.params) && rpc.params.length === 0)
-            .map((rpc) => ({ module: module.id, name: rpc.name, label: rpcLabel(rpc.name), doc: rpc.doc ?? "" }))
-    )
+    return modules
+        .flatMap((module) =>
+            (module.rpcs ?? [])
+                .filter((rpc) => Array.isArray(rpc.params) && rpc.params.length === 0)
+                .map((rpc) => ({ rank: returnRank(rpc.return_type), button: { module: module.id, name: rpc.name, label: rpcLabel(rpc.name), doc: rpc.doc ?? "" } }))
+        )
+        .sort((a, b) => a.rank - b.rank)
+        .map(({ button }) => button)
 }
 
 async function load() {

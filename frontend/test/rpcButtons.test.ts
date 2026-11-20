@@ -12,3 +12,11 @@ Deno.test("only RPCs the scan saw take no parameters get a button", () => {
         { module: "planner", name: "stop_navigation", label: "Stop Navigation", doc: "" },
     ])
 })
+
+Deno.test("RPCs returning nothing come first, then a bool, then the rest (unannotated with the rest)", () => {
+    const names = zeroArgRpcs([
+        { id: "a", rpcs: [{ name: "status", params: [], return_type: "str" }, { name: "standup", params: [], return_type: "bool" }, { name: "odd", params: [], return_type: null }] },
+        { id: "b", rpcs: [{ name: "stop", params: [], return_type: "None" }, { name: "ready", params: [], return_type: "bool" }] },
+    ]).map((button) => button.name)
+    assertEquals(names, ["stop", "standup", "ready", "status", "odd"])
+})
