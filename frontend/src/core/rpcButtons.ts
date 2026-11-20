@@ -23,6 +23,13 @@ export const rpcButtons = new Store<{ buttons: RpcButton[] }>({ buttons: [] })
 
 const gatewayUrl = (path: string) => new URL(`../../gateways/dimos/${path}`, location.href)
 
+/** Each module's hue, spread by the golden angle over the modules sorted by name, so a few modules are always far apart
+ * (a name's own hash put m20connection and mlsplannernative 6° apart). */
+export function moduleHues(buttons: RpcButton[]): Map<string, number> {
+    const modules = [...new Set(buttons.map((button) => button.module))].sort()
+    return new Map(modules.map((module, index) => [module, (210 + index * 137.508) % 360]))
+}
+
 export const rpcLabel = (name: string) => name.split("_").filter(Boolean).map((word) => word[0].toUpperCase() + word.slice(1)).join(" ")
 
 /** Every RPC the scan saw take no parameters (params null = not scanned: its arguments are unknown, so no button), those

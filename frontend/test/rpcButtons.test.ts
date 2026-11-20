@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1"
-import { zeroArgRpcs } from "../src/core/rpcButtons.ts"
+import { moduleHues, zeroArgRpcs } from "../src/core/rpcButtons.ts"
 
 Deno.test("only RPCs the scan saw take no parameters get a button", () => {
     const buttons = zeroArgRpcs([
@@ -19,4 +19,11 @@ Deno.test("RPCs returning nothing come first, then a bool, then the rest (unanno
         { id: "b", rpcs: [{ name: "stop", params: [], return_type: "None" }, { name: "ready", params: [], return_type: "bool" }] },
     ]).map((button) => button.name)
     assertEquals(names, ["stop", "standup", "ready", "status", "odd"])
+})
+
+Deno.test("each module gets its own hue, far from the others", () => {
+    const hues = moduleHues(zeroArgRpcs([{ id: "m20connection", rpcs: [{ name: "a", params: [] }] }, { id: "mlsplannernative", rpcs: [{ name: "b", params: [] }] }]))
+    assertEquals(hues.size, 2)
+    const apart = Math.abs(hues.get("m20connection")! - hues.get("mlsplannernative")!)
+    assertEquals(Math.min(apart, 360 - apart) > 90, true)
 })

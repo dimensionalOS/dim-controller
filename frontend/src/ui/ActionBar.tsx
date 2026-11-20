@@ -1,14 +1,13 @@
 // The action bar (core/actionButtons.ts): this machine's buttons along the bottom of the main view, scrolling sideways;
 // a click runs the button's shell command and shows how it went. Edit adds a button (label + command) or removes one
-// for good. After them, the running blueprint's zero-argument RPCs (core/rpcButtons.ts), one button each, its border its
-// module's color; hovering shows the module and the RPC's docstring.
+// for good. After them, the running blueprint's zero-argument RPCs (core/rpcButtons.ts), one button each, its border
+// its module's color (core/rpcButtons.ts moduleHues); hovering shows the module and the RPC's docstring.
 // Folded by default (and with no buttons, or hidden with its ‹): a single › at the edge.
 import { useEffect, useState } from "react"
 import { Button, Card, TextInput } from "dimos-react"
 import { useStore } from "../core/store.ts"
 import { actionButtons, addActionButton, removeActionButton, type RunResult, runActionButton } from "../core/actionButtons.ts"
-import { hashHue } from "../core/hashHue.ts"
-import { callRpc, type RpcButton, rpcButtons, watchRpcButtons } from "../core/rpcButtons.ts"
+import { callRpc, moduleHues, type RpcButton, rpcButtons, watchRpcButtons } from "../core/rpcButtons.ts"
 import type { ViewerApp } from "../core/app.ts"
 import { Icon } from "./icons.tsx"
 import type { WorkspaceApi } from "./Workspace.tsx"
@@ -29,6 +28,7 @@ const RESULT_MS = 8000
 export function ActionBar({ api, app }: { api: WorkspaceApi; app: ViewerApp }) {
     const { buttons } = useStore(actionButtons)
     const { buttons: rpcs } = useStore(rpcButtons)
+    const hues = moduleHues(rpcs)
     useEffect(() => watchRpcButtons(app.runs), [app])
     const [opened, setOpened] = useState(false)
     // hidden by this viewer (the › brings it back), kept across reloads
@@ -121,7 +121,7 @@ export function ActionBar({ api, app }: { api: WorkspaceApi; app: ViewerApp }) {
                     <span key={`rpc:${rpc.module}/${rpc.name}`} className="action-button-wrap">
                         <Button
                             className={`action-button rpc ${running.has(rpcId(rpc)) ? "running" : ""}`}
-                            style={{ borderColor: `hsl(${hashHue(rpc.module)} 60% 55%)` }}
+                            style={{ borderColor: `hsl(${hues.get(rpc.module)} 65% 55%)` }}
                             title={`${rpc.module}${rpc.doc ? `\n\n${rpc.doc}` : ""}`}
                             disabled={editing}
                             onClick={() => run(rpcId(rpc), rpc.label, () => callRpc(rpc))}
