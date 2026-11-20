@@ -995,7 +995,8 @@ provides:
                     Take a camera's next picture straight from its topic, at full resolution, and save it to the
                     snapshot gallery as a PNG (what a camera panel's snapshot button does). Works for Image,
                     CompressedImage and CompressedVideo (H.264, H.265, AV1: the next keyframe, so it can take a few
-                    seconds). Returns {snapshot, snapshots} like POST api/snapshots; 504 if no picture came in 10 s.
+                    seconds). Returns {snapshot, snapshots} like POST api/snapshots; 422 if its picture does not
+                    decode here, 504 if none came in 10 s.
                 x-when: you want a picture of what a camera sees now
                 requestBody:
                     content:

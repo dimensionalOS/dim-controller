@@ -154,7 +154,6 @@ pub async fn camera(Extract(api): Extract<Api>, Query(query): Query<std::collect
         Err(problem) => return error(StatusCode::SERVICE_UNAVAILABLE, format!("zenoh: {problem}")),
     };
     let mut still = crate::video::Still::default();
-    let mut last_problem = None;
     let waited = tokio::time::timeout(CAMERA_WAIT, async {
         while let Ok(sample) = subscriber.recv_async().await {
             let payload = sample.payload().to_bytes();
@@ -169,24 +168,19 @@ pub async fn camera(Extract(api): Extract<Api>, Query(query): Query<std::collect
             .await
             .expect("the decode task panicked");
             still = back;
+            // a keyframe that won't decode (no libde265, an odd format) won't on the next one either: said at once
             match decoded {
-                Ok(Some(png)) => return Some(png),
                 Ok(None) => {}
-                Err(problem) => last_problem = Some(format!("{problem:#}")),
+                done => return Some(done.map(Option::unwrap)),
             }
         }
         None
     })
     .await;
     match waited {
-        Ok(Some(png)) => store(&api, "camera", query.get("source").map(String::as_str).unwrap_or(&topic), &png),
-        _ => error(
-            StatusCode::GATEWAY_TIMEOUT,
-            match last_problem {
-                Some(problem) => format!("no picture of {topic} decoded in {} s: {problem}", CAMERA_WAIT.as_secs()),
-                None => format!("no picture from {topic} in {} s (is it publishing?)", CAMERA_WAIT.as_secs()),
-            },
-        ),
+        Ok(Some(Ok(png))) => store(&api, "camera", query.get("source").map(String::as_str).unwrap_or(&topic), &png),
+        Ok(Some(Err(problem))) => error(StatusCode::UNPROCESSABLE_ENTITY, format!("{topic}'s picture didn't decode: {problem:#}")),
+        _ => error(StatusCode::GATEWAY_TIMEOUT, format!("no picture from {topic} in {} s (is it publishing?)", CAMERA_WAIT.as_secs())),
     }
 }
 
