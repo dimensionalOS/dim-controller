@@ -1,11 +1,13 @@
 // The action bar (core/actionButtons.ts): this machine's buttons along the bottom of the main view, scrolling sideways;
 // a click runs the button's shell command and shows how it went. Edit adds a button (label + command) or removes one
-// for good. After them, the running blueprint's zero-argument RPCs (core/rpcButtons.ts), one button each, grouped by module.
+// for good. After them, the running blueprint's zero-argument RPCs (core/rpcButtons.ts), one button each, its border its
+// module's color; hovering shows the module and the RPC's docstring.
 // Folded by default (and with no buttons, or hidden with its ‹): a single › at the edge.
 import { useEffect, useState } from "react"
 import { Button, Card, TextInput } from "dimos-react"
 import { useStore } from "../core/store.ts"
 import { actionButtons, addActionButton, removeActionButton, type RunResult, runActionButton } from "../core/actionButtons.ts"
+import { hashHue } from "../core/hashHue.ts"
 import { callRpc, type RpcButton, rpcButtons, watchRpcButtons } from "../core/rpcButtons.ts"
 import type { ViewerApp } from "../core/app.ts"
 import { Icon } from "./icons.tsx"
@@ -115,12 +117,12 @@ export function ActionBar({ api, app }: { api: WorkspaceApi; app: ViewerApp }) {
                         )}
                     </span>
                 ))}
-                {rpcs.map((rpc, index) => (
+                {rpcs.map((rpc) => (
                     <span key={`rpc:${rpc.module}/${rpc.name}`} className="action-button-wrap">
-                        {rpc.module !== rpcs[index - 1]?.module && <span className="action-rpc-module" title={`${rpc.module}'s RPCs that take no arguments`}>{rpc.module}</span>}
                         <Button
                             className={`action-button rpc ${running.has(rpcId(rpc)) ? "running" : ""}`}
-                            title={`${rpc.module}.${rpc.name}()${rpc.doc ? `: ${rpc.doc}` : ""}`}
+                            style={{ borderColor: `hsl(${hashHue(rpc.module)} 60% 55%)` }}
+                            title={`${rpc.module}${rpc.doc ? `\n\n${rpc.doc}` : ""}`}
                             disabled={editing}
                             onClick={() => run(rpcId(rpc), rpc.label, () => callRpc(rpc))}
                             data-testid="rpc-button"
