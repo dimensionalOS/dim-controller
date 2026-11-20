@@ -1339,3 +1339,4 @@ html.locked-viewport, html.locked-viewport body { touch-action: none; overscroll
 .logs-logger:hover { text-decoration: underline; }
 .logs-group-chip { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: none; font: 11.5px var(--mono); cursor: pointer; }
 .logs-fold-all { flex: none; font-size: 11px; }
+.action-rpc-module { flex: none; padding: 0 4px 0 8px; font-size: 11px; color: var(--muted-fg); white-space: nowrap; }

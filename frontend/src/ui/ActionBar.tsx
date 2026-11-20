@@ -1,10 +1,13 @@
 // The action bar (core/actionButtons.ts): this machine's buttons along the bottom of the main view, scrolling sideways;
 // a click runs the button's shell command and shows how it went. Edit adds a button (label + command) or removes one
-// for good. Folded by default (and with no buttons, or hidden with its ‹): a single › at the edge.
+// for good. After them, the running blueprint's zero-argument RPCs (core/rpcButtons.ts), one button each, grouped by module.
+// Folded by default (and with no buttons, or hidden with its ‹): a single › at the edge.
 import { useEffect, useState } from "react"
 import { Button, Card, TextInput } from "dimos-react"
 import { useStore } from "../core/store.ts"
 import { actionButtons, addActionButton, removeActionButton, type RunResult, runActionButton } from "../core/actionButtons.ts"
+import { callRpc, type RpcButton, rpcButtons, watchRpcButtons } from "../core/rpcButtons.ts"
+import type { ViewerApp } from "../core/app.ts"
 import { Icon } from "./icons.tsx"
 import type { WorkspaceApi } from "./Workspace.tsx"
 
@@ -21,8 +24,10 @@ const readHidden = () => {
 /** how long a run's result stays beside the bar */
 const RESULT_MS = 8000
 
-export function ActionBar({ api }: { api: WorkspaceApi }) {
+export function ActionBar({ api, app }: { api: WorkspaceApi; app: ViewerApp }) {
     const { buttons } = useStore(actionButtons)
+    const { buttons: rpcs } = useStore(rpcButtons)
+    useEffect(() => watchRpcButtons(app.runs), [app])
     const [opened, setOpened] = useState(false)
     // hidden by this viewer (the › brings it back), kept across reloads
     const [hidden, setHidden] = useState(() => readHidden())
@@ -51,7 +56,7 @@ export function ActionBar({ api }: { api: WorkspaceApi }) {
             // no storage: hidden for this page only
         }
     }
-    const open = !hidden && (opened || buttons.length > 0)
+    const open = !hidden && (opened || buttons.length > 0 || rpcs.length > 0)
     const place = { left: stage.x + 8, bottom: innerHeight - (stage.y + stage.height) + 8, maxWidth: stage.width - 16 }
     if (!open) {
         return (
@@ -65,9 +70,9 @@ export function ActionBar({ api }: { api: WorkspaceApi }) {
             </div>
         )
     }
-    const run = async (id: string, label: string) => {
+    const run = async (id: string, label: string, call: () => Promise<RunResult> = () => runActionButton(id)) => {
         setRunning((now) => new Set(now).add(id))
-        const outcome = await runActionButton(id)
+        const outcome = await call()
         setRunning((now) => {
             const next = new Set(now)
             next.delete(id)
@@ -110,6 +115,20 @@ export function ActionBar({ api }: { api: WorkspaceApi }) {
                         )}
                     </span>
                 ))}
+                {rpcs.map((rpc, index) => (
+                    <span key={`rpc:${rpc.module}/${rpc.name}`} className="action-button-wrap">
+                        {rpc.module !== rpcs[index - 1]?.module && <span className="action-rpc-module" title={`${rpc.module}'s RPCs that take no arguments`}>{rpc.module}</span>}
+                        <Button
+                            className={`action-button rpc ${running.has(rpcId(rpc)) ? "running" : ""}`}
+                            title={`${rpc.module}.${rpc.name}()${rpc.doc ? `: ${rpc.doc}` : ""}`}
+                            disabled={editing}
+                            onClick={() => run(rpcId(rpc), rpc.label, () => callRpc(rpc))}
+                            data-testid="rpc-button"
+                        >
+                            {rpc.label}
+                        </Button>
+                    </span>
+                ))}
                 {(editing || buttons.length === 0) && (
                     <Button className="action-button add" onClick={() => setAdding(true)} data-testid="action-add">+ Add</Button>
                 )}
@@ -126,13 +145,13 @@ export function ActionBar({ api }: { api: WorkspaceApi }) {
             {adding && <AddForm onClose={() => setAdding(false)} />}
             {result && (
                 <button type="button" className={`action-result ${result.ok ? "ok" : "bad"}`} onClick={() => setDetails(!details)} data-testid="action-result">
-                    {result.ok ? "✓" : "✕"} {result.label}{result.error ? `: ${result.error}` : result.ok ? "" : ` · exit ${result.exitCode ?? "?"}`}
+                    {result.ok ? "✓" : "✕"} {result.label}{result.error ? `: ${result.error}` : result.ok || result.exitCode === null ? "" : ` · exit ${result.exitCode}`}
                 </button>
             )}
             {result && details && (
                 <Card className="action-output" padded>
                     <div className="action-output-head">
-                        <span>{result.label}: exit {result.exitCode ?? "?"} · {(result.ms / 1000).toFixed(1)} s</span>
+                        <span>{result.label}: {result.exitCode === null ? (result.ok ? "ok" : "failed") : `exit ${result.exitCode}`} · {(result.ms / 1000).toFixed(1)} s</span>
                         <button type="button" className="net-icon-button" aria-label="Close" onClick={() => setResult(null)}>×</button>
                     </div>
                     {result.stdout && <pre>{result.stdout}</pre>}
@@ -143,6 +162,8 @@ export function ActionBar({ api }: { api: WorkspaceApi }) {
         </div>
     )
 }
+
+const rpcId = (rpc: RpcButton) => `rpc:${rpc.module}/${rpc.name}`
 
 function AddForm({ onClose }: { onClose: () => void }) {
     const [label, setLabel] = useState("")

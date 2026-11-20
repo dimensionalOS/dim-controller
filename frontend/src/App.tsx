@@ -98,7 +98,7 @@ export function App({ core }: { core?: DriveCore }) {
                     <WorkspaceSurface emptyStage={(noPanels) => <EmptyStage mobile={mobile} noPanels={noPanels} />} />
                 </div>
                 {app && <Driving app={app} api={api} />}
-                {app && <ActionBar api={api} />}
+                {app && <ActionBar api={api} app={app} />}
                 {app && <GlassWindow app={app} />}
                 {app && <Overlays app={app} api={api} cameras={cameraActions} />}
                 <SteamDeckBanner />
