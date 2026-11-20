@@ -50,6 +50,9 @@ export class TfHistory {
         while (index > 0 && samples[index - 1].stamp > stamp) {
             index-- // out of order (reliable delivery from several publishers): keep them sorted
         }
+        if (index > 0 && samples[index - 1].stamp === stamp) {
+            return // the same message through tf's second subscription (core/tfFeed.ts)
+        }
         samples.splice(index, 0, sample)
         const cutoff = samples[samples.length - 1].stamp - this.windowMs
         let drop = 0

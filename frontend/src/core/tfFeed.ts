@@ -3,7 +3,7 @@
 // TFMessage topics are side channels, not the tree: a planner's own tip frames (manipulation_tf) would give links a
 // second parent.
 import { decode } from "./lcm/lcm.ts"
-import type { Connection } from "./transport.ts"
+import type { Connection, Message } from "./transport.ts"
 import type { TfTree } from "dimos-react/three"
 import type { Viewer } from "dimos-react/three"
 import type { TfHistory } from "./tfHistory.ts"
@@ -62,6 +62,8 @@ let warnedUnstamped = false
 
 export function feedTf(connection: Connection, tf: TfTree, viewer: Viewer, history: TfHistory) {
     const subscribed = new Set<string>()
+    /** each child frame's newest stamp so far (ms) */
+    const newestStamp = new Map<string, number>()
     const sync = () => {
         for (const topic of connection.status.get().topics) {
             if (topic.type !== "tf2_msgs.TFMessage" || !isTreeTopic(topic.name) || subscribed.has(topic.key)) {
@@ -69,8 +71,9 @@ export function feedTf(connection: Connection, tf: TfTree, viewer: Viewer, histo
             }
             subscribed.add(topic.key)
             const isStatic = /static/i.test(topic.name)
-            // reliable: one tf topic often carries different edges from different publishers, so none may be dropped
-            connection.subscribe(topic.key, { delivery: "reliable" }, (message) => {
+            // reliable: one tf topic often carries different edges from different publishers, so none may be dropped;
+            // latest too: on a busy link the reliable queue ran seconds behind (M20: p50 1 s, p90 6 s), and the tree must be current
+            const onMessage = (message: Message) => {
                 let decoded
                 try {
                     decoded = decode("tf2_msgs.TFMessage", message.bytes)
@@ -85,9 +88,16 @@ export function feedTf(connection: Connection, tf: TfTree, viewer: Viewer, histo
                     const parent = stamped.header?.frame_id ?? "", child = stamped.child_frame_id ?? ""
                     const position: [number, number, number] = [translation.x, translation.y, translation.z]
                     const quaternion: [number, number, number, number] = [rotation.x, rotation.y, rotation.z, rotation.w]
-                    tf.set(parent, child, position, quaternion, isStatic)
-                    tfStampHealth.transforms++
                     const stampMs = stampMsOf(stamped.header)
+                    // the two subscriptions overlap: an edge only moves forward in time, so the reliable backlog can't pull it back
+                    const newest = newestStamp.get(child)
+                    if (isStatic || stampMs === null || newest === undefined || stampMs >= newest) {
+                        tf.set(parent, child, position, quaternion, isStatic)
+                        if (stampMs !== null) {
+                            newestStamp.set(child, stampMs)
+                        }
+                    }
+                    tfStampHealth.transforms++
                     // Recorded at the time the transform says it is for, not the time it landed.
                     // Both sides of the lookup are then on the robot's own clock and a cloud can
                     // be placed by its own stamp, with nothing estimated. An edge that carries no
@@ -122,7 +132,11 @@ export function feedTf(connection: Connection, tf: TfTree, viewer: Viewer, histo
                     }
                 }
                 viewer.noteData(message.timestamp)
-            })
+            }
+            connection.subscribe(topic.key, { delivery: "reliable" }, onMessage)
+            if (!isStatic) {
+                connection.subscribe(topic.key, { delivery: "latest", maxHz: 50 }, onMessage)
+            }
         }
     }
     connection.status.subscribe(sync)
