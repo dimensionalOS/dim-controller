@@ -168,7 +168,7 @@ pub async fn camera(Extract(api): Extract<Api>, Query(query): Query<std::collect
             .await
             .expect("the decode task panicked");
             still = back;
-            // a keyframe that won't decode (no libde265, an odd format) won't on the next one either: said at once
+            // a keyframe that won't decode (an odd format or profile) won't on the next one either: said at once
             match decoded {
                 Ok(None) => {}
                 done => return Some(done.map(Option::unwrap)),

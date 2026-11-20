@@ -1,160 +1,45 @@
-//! H.265 decoding with libde265, loaded at runtime (dlopen, so building needs nothing; Ubuntu's `libde265-0`, Homebrew's
-//! `libde265`). There is no maintained pure-Rust HEVC decoder, and libde265's C API takes no struct layouts, so one
-//! loader works with every 1.x release.
+//! H.265 decoding with rusty_h265: pure Rust (no C, no system library), so it decodes in the robots' static builds too.
+//! Main and Main 10 (what camera encoders write); range extensions (4:4:4, 12-bit) are refused by name.
 
 use super::compressed_video::i420_from_planes;
-use anyhow::{Context, Result, bail};
-use libloading::Library;
-use std::ffi::{CStr, c_char, c_int, c_void};
-use std::sync::OnceLock;
 use crate::video::VideoImage;
+use anyhow::{bail, Context, Result};
 
-type Context_ = *mut c_void;
-type Image = *const c_void;
-
-const DE265_OK: c_int = 0;
-const DE265_CHROMA_MONO: c_int = 0;
-const DE265_CHROMA_420: c_int = 1;
-
-/// The libde265 functions used, from the library they live in (kept loaded with them).
-struct Api {
-    new_decoder: unsafe extern "C" fn() -> Context_,
-    free_decoder: unsafe extern "C" fn(Context_) -> c_int,
-    push_data: unsafe extern "C" fn(Context_, *const c_void, c_int, i64, *mut c_void) -> c_int,
-    flush_data: unsafe extern "C" fn(Context_) -> c_int,
-    decode: unsafe extern "C" fn(Context_, *mut c_int) -> c_int,
-    get_next_picture: unsafe extern "C" fn(Context_) -> Image,
-    get_image_width: unsafe extern "C" fn(Image, c_int) -> c_int,
-    get_image_height: unsafe extern "C" fn(Image, c_int) -> c_int,
-    get_chroma_format: unsafe extern "C" fn(Image) -> c_int,
-    get_bits_per_pixel: unsafe extern "C" fn(Image, c_int) -> c_int,
-    get_image_plane: unsafe extern "C" fn(Image, c_int, *mut c_int) -> *const u8,
-    get_error_text: unsafe extern "C" fn(c_int) -> *const c_char,
-    is_ok: unsafe extern "C" fn(c_int) -> c_int,
-    /// tells the decoder the access unit just pushed is complete, so it decodes it now instead of waiting for the next
-    /// one's first bytes (one frame of latency, every frame)
-    push_end_of_frame: unsafe extern "C" fn(Context_),
-    /// back to the state of a new decoder, keeping the context: what a stream does when it has lost samples
-    reset: unsafe extern "C" fn(Context_),
-    start_worker_threads: unsafe extern "C" fn(Context_, c_int) -> c_int,
-    _library: Library,
-}
-
-impl Api {
-    fn load() -> Result<Api> {
-        let names = ["libde265.so.0", "libde265.0.dylib", "libde265.dylib", "/opt/homebrew/lib/libde265.0.dylib", "/usr/local/lib/libde265.0.dylib"];
-        let mut errors = Vec::new();
-        // SAFETY: libde265 has no load-time side effects beyond its own initializers
-        let library = names.iter().find_map(|name| unsafe { Library::new(*name) }.map_err(|error| errors.push(error.to_string())).ok());
-        let Some(library) = library else {
-            bail!("H.265 needs libde265 (apt install libde265-0, brew install libde265): {}", errors.join("; "));
-        };
-        // SAFETY: each symbol is looked up by its C name and given its signature from de265.h
-        unsafe {
-            macro_rules! symbol {
-                ($name:literal) => {
-                    *library.get(concat!($name, "\0").as_bytes()).with_context(|| concat!("libde265 has no ", $name))?
-                };
-            }
-            Ok(Api {
-                new_decoder: symbol!("de265_new_decoder"),
-                free_decoder: symbol!("de265_free_decoder"),
-                push_data: symbol!("de265_push_data"),
-                flush_data: symbol!("de265_flush_data"),
-                decode: symbol!("de265_decode"),
-                get_next_picture: symbol!("de265_get_next_picture"),
-                get_image_width: symbol!("de265_get_image_width"),
-                get_image_height: symbol!("de265_get_image_height"),
-                get_chroma_format: symbol!("de265_get_chroma_format"),
-                get_bits_per_pixel: symbol!("de265_get_bits_per_pixel"),
-                get_image_plane: symbol!("de265_get_image_plane"),
-                get_error_text: symbol!("de265_get_error_text"),
-                is_ok: symbol!("de265_isOK"),
-                push_end_of_frame: symbol!("de265_push_end_of_frame"),
-                reset: symbol!("de265_reset"),
-                start_worker_threads: symbol!("de265_start_worker_threads"),
-                _library: library,
-            })
-        }
-    }
-
-    fn error_text(&self, error: c_int) -> String {
-        // SAFETY: de265_get_error_text returns a static NUL-terminated string for any code
-        unsafe { CStr::from_ptr((self.get_error_text)(error)) }.to_string_lossy().into_owned()
-    }
-}
-
-fn api() -> Result<&'static Api> {
-    static API: OnceLock<Result<Api, String>> = OnceLock::new();
-    API.get_or_init(|| Api::load().map_err(|error| format!("{error:#}"))).as_ref().map_err(|error| anyhow::anyhow!("{error}"))
-}
-
-/// A decoder context, freed on drop.
-struct Decoder<'a> {
-    api: &'a Api,
-    context: Context_,
-}
-
-impl Drop for Decoder<'_> {
-    fn drop(&mut self) {
-        // SAFETY: the context came from de265_new_decoder and is freed once
-        unsafe { (self.api.free_decoder)(self.context) };
-    }
-}
-
-/// The first picture in an Annex-B access unit (with its parameter sets), as I420.
+/// The first picture in an Annex-B access unit (with its parameter sets), as 8-bit I420.
 pub fn decode(data: &[u8]) -> Result<VideoImage> {
-    let api = api()?;
-    // SAFETY: a fresh context, used by this thread only, freed by the guard
-    let decoder = Decoder { api, context: unsafe { (api.new_decoder)() } };
-    anyhow::ensure!(!decoder.context.is_null(), "libde265 made no decoder");
-    let length = c_int::try_from(data.len()).context("H.265 access unit over 2 GB")?;
-    // SAFETY: libde265 copies the pushed bytes; `data` outlives the call
-    let pushed = unsafe { (api.push_data)(decoder.context, data.as_ptr().cast(), length, 0, std::ptr::null_mut()) };
-    if pushed != DE265_OK {
-        bail!("libde265: {}", api.error_text(pushed));
-    }
-    // SAFETY: as above
-    unsafe { (api.flush_data)(decoder.context) };
-    loop {
-        let mut more: c_int = 0;
-        // SAFETY: as above; `more` is a valid out pointer
-        let error = unsafe { (api.decode)(decoder.context, &mut more) };
-        // SAFETY: as above; the picture is read before any other libde265 call
-        let picture = unsafe { (api.get_next_picture)(decoder.context) };
-        if !picture.is_null() {
-            return copy_picture(api, picture);
+    let mut decoder = rusty_h265::Decoder::new();
+    decoder.push_annexb(data, None).map_err(|error| anyhow::anyhow!("rusty_h265: {error:?}"))?;
+    decoder.flush();
+    let frame = decoder.next_frame().ok().context("rusty_h265 decoded no picture from the access unit")?;
+    let picture = &frame.picture;
+    let (left, top, width, height) = picture.crop;
+    // 10-bit pictures down to 8
+    let eight_bit = |index: usize, column_shift: usize, row_shift: usize, depth: u8| -> (Vec<u8>, usize) {
+        let plane = &picture.planes[index];
+        let (columns, rows) = (width.div_ceil(1 << column_shift), height.div_ceil(1 << row_shift));
+        let (first_column, first_row) = (left >> column_shift, top >> row_shift);
+        let shift = depth.saturating_sub(8);
+        let mut out = Vec::with_capacity(columns * rows);
+        for row in first_row..first_row + rows {
+            let start = row * plane.stride + first_column;
+            out.extend(plane.data[start..start + columns].iter().map(|sample| (sample >> shift).min(255) as u8));
         }
-        // SAFETY: de265_isOK takes any code
-        if unsafe { (api.is_ok)(error) } == 0 || more == 0 {
-            bail!("libde265 decoded no picture ({})", if error == DE265_OK { "the access unit has none".to_owned() } else { api.error_text(error) });
+        (out, columns)
+    };
+    match picture.chroma_format_idc {
+        1 => {
+            let (y, u, v) = (
+                eight_bit(0, 0, 0, picture.bit_depth_luma),
+                eight_bit(1, 1, 1, picture.bit_depth_chroma),
+                eight_bit(2, 1, 1, picture.bit_depth_chroma),
+            );
+            i420_from_planes(width, height, [(&y.0, y.1), (&u.0, u.1), (&v.0, v.1)])
         }
-    }
-}
-
-/// The picture as I420, copied out of libde265 (it is only valid until the next libde265 call).
-fn copy_picture(api: &Api, picture: Image) -> Result<VideoImage> {
-    // SAFETY: `picture` is the decoder's current output, read before any other call
-    unsafe {
-        let chroma = (api.get_chroma_format)(picture);
-        let (width, height) = ((api.get_image_width)(picture, 0) as usize, (api.get_image_height)(picture, 0) as usize);
-        for channel in 0..if chroma == DE265_CHROMA_MONO { 1 } else { 3 } {
-            let bits = (api.get_bits_per_pixel)(picture, channel);
-            anyhow::ensure!(bits == 8, "H.265 picture is {bits}-bit (8-bit only)");
+        0 => {
+            let y = eight_bit(0, 0, 0, picture.bit_depth_luma);
+            let grey = vec![128; width.div_ceil(2) * height.div_ceil(2)];
+            i420_from_planes(width, height, [(&y.0, y.1), (&grey, width.div_ceil(2)), (&grey, width.div_ceil(2))])
         }
-        let plane = |channel: c_int, rows: usize| {
-            let mut stride: c_int = 0;
-            let pointer = (api.get_image_plane)(picture, channel, &mut stride);
-            (std::slice::from_raw_parts(pointer, stride as usize * rows), stride as usize)
-        };
-        match chroma {
-            DE265_CHROMA_420 => i420_from_planes(width, height, [plane(0, height), plane(1, height.div_ceil(2)), plane(2, height.div_ceil(2))]),
-            DE265_CHROMA_MONO => {
-                let grey = vec![128; width.div_ceil(2) * height.div_ceil(2)];
-                i420_from_planes(width, height, [plane(0, height), (&grey, width.div_ceil(2)), (&grey, width.div_ceil(2))])
-            }
-            other => bail!("H.265 picture has chroma format {other} (4:2:0 or monochrome only)"),
-        }
+        other => bail!("H.265 picture has chroma format {other} (4:2:0 or monochrome only)"),
     }
 }
-

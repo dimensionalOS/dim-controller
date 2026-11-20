@@ -15,13 +15,12 @@ clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 image-webp = "0.2.4"
 jpeg-encoder = "0.6"
-# snapshots of a CompressedVideo camera (src/video): H.265 through libde265, loaded at runtime
-libloading = "0.9"
 # H.264 snapshots (the C sources, built here)
 openh264 = "0.9"
 mcap = { version = "0.25.0", default-features = false, features = ["lz4", "zstd"] }
 png = "0.18.1"
-# AV1 snapshots: pure Rust
+# H.265 and AV1 snapshots: pure Rust
+rusty_h265 = "0.7"
 rav1d = { version = "1.1", default-features = false, features = ["bitdepth_8"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

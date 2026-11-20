@@ -1,7 +1,7 @@
 //! One picture out of a compressed video stream (foxglove `CompressedVideo`: H.264, H.265, AV1), for a camera snapshot.
 //! The decoders are zenoh-dimos-codecs 0.3.15's (`src/utils`, tests left there), copied because that crate can't be a
-//! dependency: it brings zenoh-gateway, and with it another zenoh. H.264 is openh264 (built in), AV1 rav1d (pure Rust),
-//! H.265 libde265 loaded at runtime (no maintained Rust decoder; the gateway loads the same one).
+//! dependency: it brings zenoh-gateway, and with it another zenoh. H.264 is openh264 (built in); H.265 (rusty_h265, in
+//! place of the codecs' libde265, which a static build can't load) and AV1 (rav1d) are pure Rust.
 #![allow(dead_code)]
 
 mod av1;
@@ -106,10 +106,6 @@ mod tests {
     #[test]
     fn a_keyframe_of_each_codec_decodes() {
         for (format, file) in [("h264", "pattern.h264"), ("av1", "pattern.av1"), ("h265", "pattern.h265")] {
-            if format == "h265" && h265::decode(&fixture(file)).is_err() {
-                eprintln!("no libde265 here: H.265 not tested");
-                continue;
-            }
             let image = Still::default().push(&fixture(file), format).unwrap().expect(format);
             assert_pattern(&image, format);
         }
@@ -117,13 +113,12 @@ mod tests {
 
     #[test]
     fn the_m20s_own_keyframe_decodes() {
-        let data = fixture("m20_front_keyframe.h265");
-        if h265::decode(&data).is_err() {
-            eprintln!("no libde265 here: H.265 not tested");
-            return;
-        }
-        let image = Still::default().push(&data, "h265").unwrap().expect("a keyframe");
-        assert!(image.width() > 0 && image.height() > 0);
+        let image = Still::default().push(&fixture("m20_front_keyframe.h265"), "h265").unwrap().expect("a keyframe");
+        assert_eq!((image.width(), image.height()), (1280, 720));
+        // a camera picture, not a flat or garbage one: its luma varies
+        let luma = &image.data()[..1280 * 720];
+        let (low, high) = (luma.iter().min().unwrap(), luma.iter().max().unwrap());
+        assert!(high - low > 100, "luma {low}..{high}");
     }
 
     #[test]

@@ -6,8 +6,8 @@
 //! how big the picture is, and a decoder can start only once it has one.
 //!
 //! The decoder is rav1d, the pure-Rust port of dav1d: an ordinary cargo dependency, with no system library to find at
-//! runtime and no C toolchain to build (unlike libde265 for H.265). Its hand-written assembly is behind this crate's
-//! `av1-asm` feature, because on x86 building it needs nasm.
+//! runtime and no C toolchain to build (nor does rusty_h265 for H.265). Its hand-written assembly is off (on x86
+//! building it needs nasm).
 
 use super::compressed_video::i420_from_planes;
 use anyhow::{Context, Result, anyhow, bail, ensure};
