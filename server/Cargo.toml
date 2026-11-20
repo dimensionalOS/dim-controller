@@ -15,8 +15,14 @@ clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 image-webp = "0.2.4"
 jpeg-encoder = "0.6"
+# snapshots of a CompressedVideo camera (src/video): H.265 through libde265, loaded at runtime
+libloading = "0.9"
+# H.264 snapshots (the C sources, built here)
+openh264 = "0.9"
 mcap = { version = "0.25.0", default-features = false, features = ["lz4", "zstd"] }
 png = "0.18.1"
+# AV1 snapshots: pure Rust
+rav1d = { version = "1.1", default-features = false, features = ["bitdepth_8"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -26,6 +32,8 @@ tower-http = { version = "0.6", features = ["fs", "compression-gzip", "compressi
 # zenoh-gateway (Desktop's) pins 1.6.2: 1.7.0 through 1.10.1 deadlock answering the admin space
 zenoh = { version = "=1.6.2", default-features = false, features = ["transport_tcp", "transport_udp"] }
 zune-core = "0.5.3"
+# camera snapshots of a JPEG camera
+zune-jpeg = "0.5"
 zune-jpegxl = "0.5.2"
 
 [dev-dependencies]

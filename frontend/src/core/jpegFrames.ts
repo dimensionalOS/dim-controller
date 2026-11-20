@@ -58,18 +58,3 @@ export function jpegFrames(connection: Connection, topic: Topic, hz: number, onF
         handle()
     }
 }
-
-/** The topic's next picture (a snapshot's), or an error after `timeoutMs`. */
-export function nextJpegFrame(connection: Connection, topic: Topic, timeoutMs = 5000): Promise<ImageBitmap> {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            stop()
-            reject(new Error("no picture from the camera topic"))
-        }, timeoutMs)
-        const stop = jpegFrames(connection, topic, 5, (bitmap) => {
-            clearTimeout(timer)
-            stop()
-            resolve(bitmap)
-        })
-    })
-}

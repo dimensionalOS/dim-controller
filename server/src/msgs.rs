@@ -9,12 +9,14 @@ pub const IMU_TYPE: &str = "sensor_msgs.Imu";
 pub const CAMERA_INFO_TYPE: &str = "sensor_msgs.CameraInfo";
 pub const ODOMETRY_TYPE: &str = "nav_msgs.Odometry";
 pub const POSE_STAMPED_TYPE: &str = "geometry_msgs.PoseStamped";
+pub const COMPRESSED_VIDEO_TYPE: &str = "foxglove_msgs.CompressedVideo";
 
 // LCM fingerprints, extracted from the generated dimos-lcm python types. A
 // publisher that sends the wrong 8 bytes is silently ignored by every dimos
 // subscriber, so these must match the .lcm definitions exactly.
 pub const TWIST_FINGERPRINT: [u8; 8] = [0x2e, 0x7c, 0x07, 0xd7, 0xcd, 0xf7, 0xe0, 0x27];
 pub const IMAGE_FINGERPRINT: [u8; 8] = [0x53, 0x5c, 0xfa, 0xce, 0x1f, 0x4f, 0x57, 0x17];
+pub const COMPRESSED_VIDEO_FINGERPRINT: [u8; 8] = [0x22, 0x17, 0xb4, 0x6e, 0xef, 0xbf, 0x7b, 0x05];
 pub const COMPRESSED_IMAGE_FINGERPRINT: [u8; 8] = [0xb8, 0xd0, 0x11, 0xc1, 0x04, 0x12, 0xb9, 0xa1];
 pub const TF_FINGERPRINT: [u8; 8] = [0xc2, 0xb8, 0xa1, 0xc3, 0x3a, 0x89, 0x23, 0xec];
 pub const POINT_CLOUD2_FINGERPRINT: [u8; 8] = [0xf5, 0xeb, 0x3d, 0xa1, 0xc2, 0x85, 0x31, 0x75];
@@ -228,6 +230,28 @@ pub fn decode_compressed_image(payload: &[u8]) -> Result<ImageMessage> {
         format,
         data,
     }))
+}
+
+/// One coded picture of a video stream (foxglove_msgs/CompressedVideo): `format` names the codec (h264, h265, av1).
+pub struct CompressedVideo {
+    pub data: Vec<u8>,
+    pub format: String,
+}
+
+pub fn decode_compressed_video(payload: &[u8]) -> Result<CompressedVideo> {
+    let mut reader = Reader::new(payload);
+    reader.expect_fingerprint(&COMPRESSED_VIDEO_FINGERPRINT)?;
+    let data_length = reader.i32()?;
+    // builtin_interfaces/Time, then frame_id
+    reader.i32()?;
+    reader.i32()?;
+    reader.string()?;
+    if data_length < 0 {
+        bail!("negative compressed video length");
+    }
+    let data = reader.take(data_length as usize)?.to_vec();
+    let format = reader.string()?;
+    Ok(CompressedVideo { data, format })
 }
 
 pub fn decode_any_image(msg_type: &str, payload: &[u8]) -> Result<ImageMessage> {

@@ -1,6 +1,7 @@
-// Snapshots (server/src/snapshots.rs): the 3D view's and each camera panel's snapshot button saves the picture as a PNG on
-// the backend, so every open page's gallery (ui/SnapshotGallery.tsx) shows the same ones; it follows the backend's
-// `snapshots` events (core/agent.ts).
+// Snapshots (server/src/snapshots.rs): the 3D view's snapshot button saves the picture as a PNG on the backend, a color
+// camera panel's has the backend take one from the camera's topic (a depth camera's is its colormap, drawn here), so
+// every open page's gallery (ui/SnapshotGallery.tsx) shows the same ones; it follows the backend's `snapshots` events
+// (core/agent.ts).
 import { Store } from "./store.ts"
 
 export interface Snapshot {
@@ -39,6 +40,13 @@ export async function loadSnapshots() {
 /** Saves a PNG; returns the saved snapshot. */
 export async function saveSnapshot(png: Blob, view: "3d" | "camera", source = ""): Promise<Snapshot> {
     const { snapshot, snapshots: list } = await call("POST", `api/snapshots?${new URLSearchParams({ view, source })}`, png)
+    snapshots.update({ list })
+    return snapshot
+}
+
+/** Has the backend take a camera's next picture from its topic (full resolution; a video camera's next keyframe) and save it. `key` is the topic's zenoh key. */
+export async function saveCameraSnapshot(key: string, source: string): Promise<Snapshot> {
+    const { snapshot, snapshots: list } = await call("POST", `api/snapshots/camera?${new URLSearchParams({ topic: key, source })}`)
     snapshots.update({ list })
     return snapshot
 }

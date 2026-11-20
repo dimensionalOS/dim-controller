@@ -27,6 +27,7 @@ mod recordings;
 mod routes;
 mod settings;
 mod snapshots;
+mod video;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -8,13 +8,14 @@ import { createPortal } from "react-dom"
 import type { ViewerApp } from "../core/app.ts"
 import { persistentStore, useStore } from "../core/store.ts"
 import { parseKey, type Topic } from "../core/transport.ts"
+import { toWire } from "../core/namespace.ts"
 import { type DepthImage, isDepthTopic, pageVisibility, panelStreams, RESUBSCRIBE_MS, STALL_MS } from "../core/video.ts"
 import { cameraTabs, isImage, pickDefault as pickPreferred, retargetPanels } from "../core/cameraChoice.ts"
 import { overlayTypeFor } from "../core/layers/registry.ts"
 import { decode } from "../core/lcm/lcm.ts"
 import { DEFAULT_DEPTH_LOOK, DEPTH_COLORMAPS, DepthCanvas, type DepthLook } from "../core/render/depth.ts"
-import { canvasToPng, composeSnapshot, saveSnapshot } from "../core/snapshots.ts"
-import { hasJpegFrames, jpegFrames, nextJpegFrame, videoReadable } from "../core/jpegFrames.ts"
+import { canvasToPng, composeSnapshot, saveCameraSnapshot, saveSnapshot } from "../core/snapshots.ts"
+import { hasJpegFrames, jpegFrames, videoReadable } from "../core/jpegFrames.ts"
 import { SnapshotTools } from "./SnapshotGallery.tsx"
 import { UndistortCanvas, undistortInfoFor } from "../core/render/undistort.ts"
 import { type CameraModel, cameraModel } from "dimos-react/three"
@@ -40,15 +41,6 @@ const JPEG_UNDISTORT_HZ = 10
 /** frames of an empty or one-colour result before undistort gives up on this browser: a stream's first frame can
  * legitimately be flat, so the verdict waits for a few in a row */
 const PROBE_FRAMES = 4
-
-/** the camera topic's next JPEG on a canvas (a snapshot's picture, the same size as the video's) */
-async function jpegCanvas(app: ViewerApp, topic: Topic): Promise<HTMLCanvasElement> {
-    const bitmap = await nextJpegFrame(app.connection, topic)
-    const canvas = composeSnapshot([bitmap], bitmap.width, bitmap.height)
-    bitmap.close()
-    return canvas
-}
-
 
 export interface PanelState {
     id: number
@@ -548,28 +540,27 @@ function CameraPanel({ app, panel, topics, onChange }: {
     const nextTab = tabs.length > 1 ? tabs[(tabs.findIndex((tab) => tab.topic.key === panel.key) + 1) % tabs.length] : null
     const qualityIndex = QUALITY_PRESETS.findIndex((preset) => preset.id === quality)
     const nextQuality = QUALITY_PRESETS[(qualityIndex + 1) % QUALITY_PRESETS.length]
-    /** The picture as it shows now (undistorted if it is, the overlay on top), drawn afresh in this task: its WebGL canvases keep no picture once shown. */
+    /** A color camera's next picture, taken by the backend from its topic at full quality (a video camera's next keyframe;
+     * no overlay, not undistorted); a depth camera's colormap as it shows now, drawn afresh in this task (its WebGL canvas
+     * keeps no picture once shown). */
     const takeSnapshot = async () => {
-        const element = video.current
-        let picture: HTMLVideoElement | HTMLCanvasElement | null = null
-        if (depth && depthRenderer.current && lastDepth.current) {
-            depthRenderer.current.draw(lastDepth.current, lookRef.current)
-            picture = depthRenderer.current.canvas
-        } else if (!depth && element?.videoWidth) {
-            // a video the browser can't read back (Firefox on Android) gives a blank snapshot: the camera's next JPEG instead
-            picture = topic && hasJpegFrames(topic) && videoReadable(element) === false ? await jpegCanvas(app, topic) : element
+        if (!topic) {
+            throw new Error("no camera")
         }
-        if (!picture || !topic) {
+        if (!depth) {
+            return saveCameraSnapshot(toWire(topic.key), topic.key)
+        }
+        if (!depthRenderer.current || !lastDepth.current) {
             throw new Error("no picture yet")
         }
+        depthRenderer.current.draw(lastDepth.current, lookRef.current)
+        let picture: HTMLCanvasElement = depthRenderer.current.canvas
         // only swap in the undistorted canvas when it really drew, or the snapshot is a blank one
         if (undistorting && undistortDraw.current?.(picture) && undistortCanvas.current) {
             picture = undistortCanvas.current
         }
-        const width = picture instanceof HTMLVideoElement ? picture.videoWidth : picture.width
-        const height = picture instanceof HTMLVideoElement ? picture.videoHeight : picture.height
         const layers = overlayCanvas.current?.width ? [picture, overlayCanvas.current] : [picture]
-        return saveSnapshot(await canvasToPng(composeSnapshot(layers, width, height)), "camera", topic.key)
+        return saveSnapshot(await canvasToPng(composeSnapshot(layers, picture.width, picture.height)), "camera", topic.key)
     }
     useDockActions(cameraId(panel.id), [
         { id: "fill", label: fill ? "Fill" : "Fit", icon: fill ? "fill" : "fit", title: fill ? "Fill: the picture fills the view, edges cropped (click to fit the whole picture)" : "Fit: the whole picture, letterboxed (click to fill the view)", pressed: fill, run: toggleFill },

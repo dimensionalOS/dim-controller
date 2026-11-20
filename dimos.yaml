@@ -989,6 +989,28 @@ provides:
                                         minItems: 2
                                         type: array
                                 type: object
+        /api/snapshots/camera:
+            post:
+                description: >-
+                    Take a camera's next picture straight from its topic, at full resolution, and save it to the
+                    snapshot gallery as a PNG (what a camera panel's snapshot button does). Works for Image,
+                    CompressedImage and CompressedVideo (H.264, H.265, AV1: the next keyframe, so it can take a few
+                    seconds). Returns {snapshot, snapshots} like POST api/snapshots; 504 if no picture came in 10 s.
+                x-when: you want a picture of what a camera sees now
+                requestBody:
+                    content:
+                        application/json:
+                            schema:
+                                properties:
+                                    source:
+                                        description: 'query: the name to file it under (default: the topic)'
+                                        type: string
+                                    topic:
+                                        description: 'query: the camera''s zenoh key, dimos/<topic>/<type>'
+                                        type: string
+                                required:
+                                    - topic
+                                type: object
 nix:
     cache:
         aarch64-linux:
