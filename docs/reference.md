@@ -113,6 +113,12 @@ namespaces' and the global ones (dimos's own order), never another robot's; what
 into the namespace, and TF frames lose the prefix coming in and get it back going out. It's this page's choice (this
 browser's, or the link's `?namespace=fleet/robot1`), so two windows can drive two robots; picking one reloads the page.
 
+A hosted run (`dimos host`, a blueprint spread over several machines) puts its streams under its run domain,
+`dimos-domains/<run id>/<topic>/<type>`, not `dimos/`. The app finds it by itself (the running run's id from the dimos
+gateway's `/active` when that domain is on the bus; with no run known here, the newest domain on the bus) and works as
+if the streams were at `dimos/`: the page, drive, recordings and snapshots alike (dimos's RPCs stay at `dimos/rpc/`). A
+new domain reloads the page.
+
 The Logs panel (closed until asked for: the Logs chip, or Settings) follows the running blueprint's dimos log (the
 dimos gateway's `history/{runId}/logs`, read again on its `log` event), its tools in one row: a Filter button (its popover picks the group: one logger, picked from the list or
 typed as part of its name, and the detail, the lowest level), a search and follow. Each record is one line until clicked. While it shows, the Logs chip has nothing to count.

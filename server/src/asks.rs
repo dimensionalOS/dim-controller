@@ -142,12 +142,19 @@ struct Wanted {
 
 #[derive(Default)]
 pub struct Asks {
+    /// the run domain its global asks go into (run_domain.rs; "" = none)
+    domain: String,
     done: AtomicBool,
     asking: AtomicBool,
     wanted: Mutex<Wanted>,
 }
 
 impl Asks {
+    /// Asks in a run domain: the global requests go into it (those beside a heard key are in it already).
+    pub fn in_domain(domain: &str) -> Self {
+        Self { domain: domain.to_string(), ..Self::default() }
+    }
+
     /// Starts asking on `session` (every TICK, until `stop`): once, when an announcement is first recorded, so a
     /// recording without one opens no session for it.
     pub fn ask_on(self: &Arc<Self>, session: zenoh::Session) {
@@ -156,7 +163,7 @@ impl Asks {
         }
         let looping = self.clone();
         tokio::spawn(async move {
-            let _ = session.put(URDF_NOW_KEY, encode_string("")).await;
+            let _ = session.put(crate::run_domain::wire(URDF_NOW_KEY, &looping.domain), encode_string("")).await;
             while !looping.done.load(Ordering::Relaxed) {
                 for (key, payload) in looping.due(Instant::now()) {
                     let _ = session.put(key, payload).await;
@@ -240,7 +247,7 @@ impl Asks {
                 .is_none_or(|when| now.duration_since(when) >= URDF_ASK_EVERY)
         {
             meshes.urdf_asked = Some(now);
-            out.push((URDF_REQUEST_KEY.to_string(), encode_string(URDF_REQUEST)));
+            out.push((crate::run_domain::wire(URDF_REQUEST_KEY, &self.domain), encode_string(URDF_REQUEST)));
         }
         let in_flight = meshes
             .asked

@@ -27,6 +27,7 @@ use crate::asks::{self, Asks};
 use crate::image::ImageFormat;
 use crate::logs::LogTailer;
 use crate::record::{self, Compression, Recorder};
+use crate::run_domain::{self, RunDomain};
 use crate::settings::Settings as Store;
 
 /// The setting key the recorder's options live under.
@@ -212,6 +213,8 @@ pub struct State {
     session: AsyncMutex<Option<zenoh::Session>>,
     active: AsyncMutex<Option<Active>>,
     meter: AsyncMutex<Option<Meter>>,
+    /// a hosted run's domain (run_domain.rs): keys come and go in `dimos/` form, the bus has them in it
+    pub domain: RunDomain,
 }
 
 /// The keys plus the answer streams their announcements bring (a recorded /robot_description records /file_info too),
@@ -234,8 +237,10 @@ fn covered(subscribed: &BTreeSet<String>, key: &str) -> bool {
     })
 }
 
-/// `dimos/<topic>/<pkg.Type>` → ("/<topic>", "pkg.Type"); anything else is not a dimos channel.
+/// `dimos/<topic>/<pkg.Type>` (or a run domain's `dimos-domains/<d>/<topic>/<pkg.Type>`) → ("/<topic>", "pkg.Type");
+/// anything else is not a dimos channel.
 pub fn split_key(key: &str) -> Option<(String, String)> {
+    let key = &run_domain::plain(key);
     let rest = key.strip_prefix("dimos/")?;
     let (topic, msg_type) = rest.rsplit_once('/')?;
     let (package, name) = msg_type.split_once('.')?;
@@ -261,6 +266,7 @@ impl State {
             session: AsyncMutex::new(None),
             active: AsyncMutex::new(None),
             meter: AsyncMutex::new(None),
+            domain: RunDomain::default(),
         }
     }
 
@@ -276,6 +282,13 @@ impl State {
         } else {
             PathBuf::from(chosen)
         }
+    }
+
+    /// The run domain the bus's dimos streams are in now ("" = none: run_domain.rs).
+    pub async fn run_domain(&self) -> anyhow::Result<String> {
+        let session = self.session().await?;
+        let desktop = crate::dimos_app::field(|app| app.desktop_url.as_ref()).unwrap_or_default();
+        Ok(self.domain.get(&session, &desktop).await)
     }
 
     pub async fn session(&self) -> anyhow::Result<zenoh::Session> {
@@ -342,18 +355,20 @@ impl State {
                 let Some((topic, msg_type)) = fixed.as_ref().or(split.as_ref()) else {
                     return;
                 };
-                if wildcard && unticked(&store, sample_key) {
+                // the panel's choices and the status are by `dimos/` key, a run domain's too
+                let page_key = run_domain::plain(sample_key);
+                if wildcard && unticked(&store, &page_key) {
                     return;
                 }
                 let throttle = throttles.lock().unwrap().entry(sample_key.to_string()).or_default().clone();
                 // the rate is read per message, so a change applies to a running recording
-                if !throttle.admit(record::now_nanos(), max_rate(&store, sample_key)) {
+                if !throttle.admit(record::now_nanos(), max_rate(&store, &page_key)) {
                     recorder.skip();
                     return;
                 }
                 let mut seen_keys = seen.lock().unwrap();
-                if !seen_keys.contains(sample_key) {
-                    seen_keys.insert(sample_key.to_string());
+                if !seen_keys.contains(&page_key) {
+                    seen_keys.insert(page_key);
                 }
                 drop(seen_keys);
                 let payload = sample.payload().to_bytes();
@@ -390,7 +405,12 @@ impl State {
         )?);
         let tailer = LogTailer::start(recorder.clone());
         logs.watch(&tailer);
-        let asks = Arc::new(Asks::default());
+        // (a start naming no keys opens no session)
+        let domain = match &keys {
+            Some(keys) if keys.is_empty() => String::new(),
+            _ => self.run_domain().await.unwrap_or_default(),
+        };
+        let asks = Arc::new(Asks::in_domain(&domain));
         let mut started = Active {
             recorder: recorder.clone(),
             subscribers: Vec::new(),
@@ -405,6 +425,7 @@ impl State {
         if named_locations {
             keys.push(NAMED_LOCATIONS_KEY.to_string());
         }
+        let keys: Vec<String> = keys.iter().map(|key| run_domain::wire(key, &domain)).collect();
         for key in keys {
             if !covered(&started.keys, &key) && started.keys.insert(key.clone()) {
                 match self.subscribe(&recorder, &asks, &started.seen, &key).await {
@@ -417,7 +438,7 @@ impl State {
             }
         }
         if named_locations {
-            let _ = self.session().await?.put(NAMED_LOCATIONS_REQUEST_KEY, asks::encode_string("")).await;
+            let _ = self.session().await?.put(run_domain::wire(NAMED_LOCATIONS_REQUEST_KEY, &domain), asks::encode_string("")).await;
         }
         let status = recorder.status();
         *active = Some(started);
@@ -430,8 +451,9 @@ impl State {
         let Some(active) = active.as_mut() else {
             anyhow::bail!("not recording");
         };
+        let domain = if keys.is_empty() { String::new() } else { self.run_domain().await.unwrap_or_default() };
         let mut added = 0;
-        for key in with_answers(keys) {
+        for key in with_answers(keys).iter().map(|key| run_domain::wire(key, &domain)) {
             if !covered(&active.keys, &key) && active.keys.insert(key.clone()) {
                 active
                     .subscribers
@@ -479,36 +501,37 @@ impl State {
         .await?
     }
 
-    /// The dimos keys on the bus now: liveliness tokens, plus what is heard in a short listen.
+    /// The dimos keys on the bus now (a run domain's by their `dimos/` keys): liveliness tokens, plus what is heard in a
+    /// short listen.
     pub async fn discover(&self) -> anyhow::Result<Vec<String>> {
         let session = self.session().await?;
+        let domain = self.run_domain().await?;
         let found: Arc<Mutex<BTreeSet<String>>> = Arc::default();
         let sink = found.clone();
         let listener = session
-            .declare_subscriber("dimos/**")
+            .declare_subscriber(run_domain::wire("dimos/**", &domain))
             .callback(move |sample| {
                 sink.lock()
                     .unwrap()
-                    .insert(sample.key_expr().as_str().to_string());
+                    .insert(run_domain::plain(sample.key_expr().as_str()));
             })
             .await
             .map_err(|error| anyhow::anyhow!("zenoh: {error}"))?;
         for selector in ["dimos/**", "dimos/**/@adv/pub/**"] {
             if let Ok(replies) = session
                 .liveliness()
-                .get(selector)
+                .get(run_domain::wire(selector, &domain))
                 .timeout(std::time::Duration::from_millis(400))
                 .await
             {
                 while let Ok(reply) = replies.recv_async().await {
                     if let Ok(sample) = reply.result() {
                         let token = sample.key_expr().as_str();
-                        found.lock().unwrap().insert(
+                        found.lock().unwrap().insert(run_domain::plain(
                             token
                                 .split_once("/@adv/pub/")
-                                .map_or(token, |(key, _)| key)
-                                .to_string(),
-                        );
+                                .map_or(token, |(key, _)| key),
+                        ));
                     }
                 }
             }
@@ -587,17 +610,18 @@ impl State {
 
     async fn start_meter(self: &Arc<Self>) -> anyhow::Result<Meter> {
         let session = self.session().await?;
+        let domain = self.run_domain().await?;
         let counts: Arc<Mutex<HashMap<String, (u64, u64)>>> = Arc::default();
         let sink = counts.clone();
         let subscriber = session
-            .declare_subscriber("dimos/**")
+            .declare_subscriber(run_domain::wire("dimos/**", &domain))
             .callback(move |sample| {
-                let key = sample.key_expr().as_str();
-                if split_key(key).is_none() {
+                let key = run_domain::plain(sample.key_expr().as_str());
+                if split_key(&key).is_none() {
                     return;
                 }
                 let mut counts = sink.lock().unwrap();
-                let entry = counts.entry(key.to_string()).or_default();
+                let entry = counts.entry(key).or_default();
                 entry.0 += sample.payload().len() as u64;
                 entry.1 += 1;
             })
@@ -964,6 +988,7 @@ mod tests {
         );
         assert_eq!(split_key("dimos/**"), None);
         assert_eq!(split_key("other/odom/nav_msgs.Odometry"), None);
+        assert_eq!(split_key("dimos-domains/run1/odom/nav_msgs.Odometry"), Some(("/odom".into(), "nav_msgs.Odometry".into())));
         assert_eq!(split_key("dimos/odom/notatype"), None);
     }
 
@@ -1073,6 +1098,50 @@ mod tests {
             .map(|message| message.unwrap().channel.topic.clone())
             .collect();
         assert_eq!(topics, vec!["/test_cmd"; 5]);
+        robot.close().await.unwrap();
+    }
+
+    /// A hosted run's streams are in its run domain: a recording of `dimos/` keys takes them from there (found on the bus,
+    /// no Desktop here), under their plain topics, and leaves the same keys outside the domain out.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn records_a_run_domains_streams_by_their_plain_keys() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut config = zenoh::Config::default();
+        config.insert_json5("listen/endpoints", &format!(r#"["tcp/127.0.0.1:{port}"]"#)).unwrap();
+        config.insert_json5("scouting/multicast/enabled", "false").unwrap();
+        let robot = zenoh::open(config).await.unwrap();
+        let dir = temp_dir("domain");
+        let state = Arc::new(State::new(dir.clone(), format!("tcp/127.0.0.1:{port}")));
+        state.session().await.unwrap();
+        let twist = crate::msgs::encode_twist([0.5, 0.0, 0.0], [0.0, 0.0, 0.25]);
+        // the run's streams keep coming, so the backend's short listen hears its domain
+        let sending = robot.clone();
+        let beat = twist.clone();
+        let keep_sending = tokio::spawn(async move {
+            loop {
+                sending.put("dimos-domains/20261120-101500-go2/odom/nav_msgs.Odometry", beat.clone()).await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert_eq!(state.run_domain().await.unwrap(), "20261120-101500-go2");
+        let app = crate::api::test_router(state.clone());
+        let (status, body) = call(&app, "POST", "/api/recorder/start", r#"{"keys":["dimos/test_cmd/geometry_msgs.Twist"],"name":"domain.mcap"}"#).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        for _ in 0..5 {
+            robot.put("dimos-domains/20261120-101500-go2/test_cmd/geometry_msgs.Twist", twist.clone()).await.unwrap();
+            robot.put("dimos/test_cmd/geometry_msgs.Twist", twist.clone()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let (status, body) = call(&app, "POST", "/api/recorder/stop", "").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["messages"], 5);
+        let bytes = std::fs::read(dir.join("domain.mcap")).unwrap();
+        let topics: Vec<String> = mcap::MessageStream::new(&bytes).unwrap().map(|message| message.unwrap().channel.topic.clone()).collect();
+        assert_eq!(topics, vec!["/test_cmd"; 5]);
+        keep_sending.abort();
         robot.close().await.unwrap();
     }
 

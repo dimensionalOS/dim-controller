@@ -25,6 +25,7 @@ mod record;
 mod recorder;
 mod recordings;
 mod routes;
+mod run_domain;
 mod settings;
 mod snapshots;
 mod video;

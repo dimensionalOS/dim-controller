@@ -125,7 +125,7 @@ impl Drive {
             let Ok(session) = recorder.session().await else {
                 return;
             };
-            let key = key(&command.topic);
+            let key = crate::run_domain::wire(&key(&command.topic), &recorder.run_domain().await.unwrap_or_default());
             let moving = encode_twist(command.linear, command.angular);
             let zero = encode_twist([0.0; 3], [0.0; 3]);
             let ticks = (command.seconds * HZ as f64).ceil() as u64;
