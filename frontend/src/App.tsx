@@ -111,7 +111,7 @@ export function App({ core }: { core?: DriveCore }) {
 }
 
 const placeholderRobot = new Store({ type: "dog" as const, auto: true, reason: "" })
-const placeholderRuns = new Store<RunState>({ known: false, desktop: false, dimosInstalled: null, running: [], starting: null, blueprints: {} })
+const placeholderRuns = new Store<RunState>({ known: false, desktop: false, dimosInstalled: null, running: [], starting: null, runId: null, blueprints: {} })
 
 /** Nothing in the main view: "Add a panel", and, with no panels at all, an arrow down to the Settings button that adds one (a phone: its panel list). */
 function EmptyStage({ mobile, noPanels }: { mobile: boolean; noPanels: boolean }) {

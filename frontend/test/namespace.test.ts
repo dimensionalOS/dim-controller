@@ -1,7 +1,7 @@
 // The robot namespace (core/namespace.ts): keys into it and back, the topics a page sees, the namespaces found, frames
 // stripped on the way in and given back on the way out, and the client that maps every key.
 import { assertEquals } from "jsr:@std/assert@1"
-import { cleanNamespace, forgetFrames, fromWire, levelsOf, namespacedClient, namespacedTopics, prefixFrames, seenNamespaces, stripFrames, toWire } from "../src/core/namespace.ts"
+import { cleanDomain, cleanNamespace, domainChange, domainOf, forgetFrames, fromWire, levelsOf, namespacedClient, namespacedTopics, pickDomain, prefixFrames, seenDomains, seenNamespaces, stripFrames, toWire, undomained } from "../src/core/namespace.ts"
 import { parseKey, type Topic } from "../src/core/transport.ts"
 
 const topic = (key: string) => parseKey(key) as Topic
@@ -125,4 +125,77 @@ Deno.test("the client maps every key: subscribe (and the messages' keys back), p
         ["listTopics", "dimos/**"],
     ])
     assertEquals([heard, client.state, namespacedClient(raw, "")], [["dimos/odom/nav_msgs.Odometry"], "connected", raw])
+})
+
+// ---- the run domain: a hosted run's streams at dimos-domains/<run id>/… ----
+
+Deno.test("run domain: keys go into it last and come out of it first; Desktop's keys and dimos's RPCs stay out", () => {
+    forgetFrames()
+    assertEquals(toWire("dimos/cmd_vel/geometry_msgs.Twist", "", "20261120-101500-go2"), "dimos-domains/20261120-101500-go2/cmd_vel/geometry_msgs.Twist")
+    assertEquals(toWire("dimos/**", "", "run1"), "dimos-domains/run1/**")
+    assertEquals(toWire("dimos/cmd_vel/geometry_msgs.Twist", "robot1", "run1"), "dimos-domains/run1/robot1/cmd_vel/geometry_msgs.Twist")
+    assertEquals(toWire("dimos/events/launch", "", "run1"), "dimos/events/launch")
+    assertEquals(toWire("dimos/rpc/Go2/stand", "", "run1"), "dimos/rpc/Go2/stand")
+    assertEquals(toWire("dim-controller/frontend/x", "", "run1"), "dim-controller/frontend/x")
+    assertEquals(fromWire("dimos-domains/run1/odom/nav_msgs.Odometry", "", "run1"), "dimos/odom/nav_msgs.Odometry")
+    assertEquals(fromWire("dimos-domains/run1/robot1/odom/nav_msgs.Odometry", "robot1", "run1"), "dimos/odom/nav_msgs.Odometry")
+    assertEquals(fromWire("dimos-domains/run2/odom/nav_msgs.Odometry", "", "run1"), "dimos-domains/run2/odom/nav_msgs.Odometry")
+    // without one, exactly as before
+    assertEquals(toWire("dimos/cmd_vel/geometry_msgs.Twist", "", ""), "dimos/cmd_vel/geometry_msgs.Twist")
+    assertEquals(fromWire("dimos/odom/nav_msgs.Odometry", "", ""), "dimos/odom/nav_msgs.Odometry")
+})
+
+Deno.test("run domain: domains on the bus, a domained key's plain form", () => {
+    assertEquals(seenDomains(["dimos-domains/b/odom/nav_msgs.Odometry", "dimos-domains/a/x/y.Z", "dimos/odom/nav_msgs.Odometry", "dimos-domains/b/tf/tf2_msgs.TFMessage"]), ["a", "b"])
+    assertEquals([domainOf("dimos-domains/r.1-x/odom/T.T"), domainOf("dimos/odom/T.T")], ["r.1-x", ""])
+    assertEquals(undomained("dimos-domains/run1/color_image/sensor_msgs.Image"), "dimos/color_image/sensor_msgs.Image")
+    assertEquals([cleanDomain("20261120-101500-go2"), cleanDomain("a/b"), cleanDomain("")], ["20261120-101500-go2", "", ""])
+})
+
+Deno.test("run domain: the running run's own when it's there, none for a plain run, else the current one or the newest", () => {
+    assertEquals(pickDomain(["20261120-090000-a", "20261120-101500-go2"], "20261120-090000-a", ""), "20261120-090000-a")
+    // a plain `dimos run` is running: its streams are at dimos/, whatever else is on the bus
+    assertEquals(pickDomain(["20261120-090000-a"], "20261120-110000-plain", "20261120-090000-a"), "")
+    // no run here (this machine only hosts a fragment, or there's no Desktop)
+    assertEquals(pickDomain(["20261120-090000-a", "20261120-101500-go2"], null, ""), "20261120-101500-go2")
+    assertEquals(pickDomain(["20261120-090000-a", "20261120-101500-go2"], null, "20261120-090000-a"), "20261120-090000-a")
+    assertEquals(pickDomain([], null, "gone"), "")
+})
+
+Deno.test("run domain: a change reloads, except leaving one the page just came up in before its run has had time to show", () => {
+    assertEquals(domainChange(["run1"], "run1", "", 2000, 20000), "run1")
+    assertEquals(domainChange(["run1"], "run1", "run1", 2000, 20000), null)
+    assertEquals(domainChange([], null, "", 2000, 20000), null)
+    assertEquals(domainChange([], null, "run1", 2000, 20000), null)
+    assertEquals(domainChange([], null, "run1", 25000, 20000), "")
+    assertEquals(domainChange(["run2"], "run2", "run1", 2000, 20000), "run2")
+    assertEquals(domainChange(["run1"], "plain", "run1", 2000, 20000), "")
+})
+
+Deno.test("run domain: the client maps every key into it, and the messages' keys back", () => {
+    forgetFrames()
+    const calls: unknown[][] = []
+    const raw = {
+        subscribe(key: string, _options: unknown, callback: (message: { key: string }) => void) {
+            calls.push(["subscribe", key])
+            callback({ key: key.replace("**", "odom/nav_msgs.Odometry") })
+        },
+        publisher: (key: string) => calls.push(["publisher", key]),
+        lease: (options: { publish: string[] }) => calls.push(["lease", options.publish]),
+        listTopics: (filter: string) => calls.push(["listTopics", filter]),
+    }
+    const client = namespacedClient(raw, "", "run1")
+    const heard: string[] = []
+    client.subscribe("dimos/**", {}, (message) => heard.push(message.key))
+    client.publisher("dimos/cmd_vel/geometry_msgs.Twist")
+    client.lease({ publish: ["dimos/tele_cmd_vel/geometry_msgs.Twist"] })
+    client.listTopics("dimos-domains/**")
+    assertEquals(calls, [
+        ["subscribe", "dimos-domains/run1/**"],
+        ["publisher", "dimos-domains/run1/cmd_vel/geometry_msgs.Twist"],
+        ["lease", ["dimos-domains/run1/tele_cmd_vel/geometry_msgs.Twist"]],
+        ["listTopics", "dimos-domains/**"],
+    ])
+    assertEquals(heard, ["dimos/odom/nav_msgs.Odometry"])
+    assertEquals(namespacedClient(raw, "", ""), raw)
 })

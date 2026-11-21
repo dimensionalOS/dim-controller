@@ -6,7 +6,7 @@ import { loadSettings } from "./core/store.ts"
 import { watchReload } from "./core/reloadWatch.ts"
 import { DriveCore } from "./core/driveCore.ts"
 import { BootShell } from "./ui/BootShell.tsx"
-import { startNamespace } from "./core/namespace.ts"
+import { startDomain, startNamespace } from "./core/namespace.ts"
 
 watchReload()
 
@@ -19,6 +19,7 @@ const FullPage = lazy(() => fullPage)
 // toasts and dialogs; the page's zenoh connection is the app's own (core/transport.ts), so no URL-state bridge
 loadSettings().then(() => {
     startNamespace()
+    startDomain()
     const core = new DriveCore()
     createRoot(document.getElementById("root")!).render(
         <AppProvider url={false}>

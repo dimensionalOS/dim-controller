@@ -16,17 +16,19 @@ export interface RunState {
     running: string[]
     /** a blueprint the Launcher is starting, or null */
     starting: string | null
+    /** the running run's id (Desktop's /active runId; a hosted run's streams are in its run domain, core/namespace.ts); null = none or unknown */
+    runId: string | null
     /** each running blueprint's modules and their streams (Desktop's /gateways/dimos/catalog/blueprints/<name>); null = unknown */
     blueprints: Record<string, Module[] | null>
 }
 
-type Active = { running?: boolean; blueprint?: string | null; launch?: { blueprint?: string; phase?: string } | null }
+type Active = { running?: boolean; runId?: string | null; blueprint?: string | null; launch?: { blueprint?: string; phase?: string } | null }
 type Blueprint = { modules?: Module[] }
 
 const desktopUrl = (path: string) => new URL(`../../${path}`, location.href)
 
 export class RunWatch {
-    readonly state = new Store<RunState>({ known: false, desktop: false, dimosInstalled: null, running: [], starting: null, blueprints: {} })
+    readonly state = new Store<RunState>({ known: false, desktop: false, dimosInstalled: null, running: [], starting: null, runId: null, blueprints: {} })
     #pending: Promise<void> | null = null
     #again = false
     #blueprints = new Map<string, Module[]>()
@@ -103,10 +105,11 @@ export class RunWatch {
                     blueprints[name] = null // its metadata isn't available: auto falls back to the standard topics
                 }
             }
-            this.state.set({ known: true, desktop: true, dimosInstalled, running: [...running], starting, blueprints })
+            const runId = active.running && typeof active.runId === "string" && active.runId ? active.runId : null
+            this.state.set({ known: true, desktop: true, dimosInstalled, running: [...running], starting, runId, blueprints })
         } catch {
             // no Desktop dimos API here (dev server, remote robot): the profile's list and the bridge are enough
-            this.state.update({ known: true, desktop: false, dimosInstalled })
+            this.state.update({ known: true, desktop: false, dimosInstalled, runId: null })
         }
     }
 }

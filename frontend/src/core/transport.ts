@@ -6,7 +6,7 @@ import { getZenoh } from "dimos-react/dim-app/zenoh.js"
 import { Store } from "./store.ts"
 import { NetHistory, wireCounts, type WireCounts } from "./netHistory.ts"
 import { LeaseKeeper, type LeaseClient } from "./lease.ts"
-import { namespacedClient, namespacedTopics, seenNamespaces } from "./namespace.ts"
+import { activeDomain, chooseDomain, domainChange, domainOf, namespacedClient, namespacedTopics, seenDomains, seenNamespaces, undomained } from "./namespace.ts"
 import { applyOverride, bandwidthOverrides, defaultBandwidthPriority, isVideoOptions, localLinkBandwidth, optionDiff, type StreamOverride, withChanges } from "./bandwidth.ts"
 
 export { Priority }
@@ -57,6 +57,8 @@ export interface ConnectionState {
     topics: Topic[]
     /** the robot namespaces on the bus (Settings → Namespace picks one) */
     namespaces: string[]
+    /** the run domain this page runs under ("" = none: core/namespace.ts) */
+    domain: string
     droppedPerSecond: number
     rttMs: number | null
     /** bytes per second reaching this page over the wire (the WebRTC transport's received bytes), else the gateway's own count; null before the first sample */
@@ -123,7 +125,7 @@ const LEASE_RETRY_TICKS = 3
 
 export class Connection {
     client: ZenohGateway | null = null
-    readonly status = new Store<ConnectionState>({ state: "connecting", topics: [], namespaces: [], droppedPerSecond: 0, rttMs: null, throughputBytesPerSec: null, error: null })
+    readonly status = new Store<ConnectionState>({ state: "connecting", topics: [], namespaces: [], domain: activeDomain(), droppedPerSecond: 0, rttMs: null, throughputBytesPerSec: null, error: null })
     #subscriptions = new Set<LiveSubscription>()
     #lastDropped = 0
     /** the gateway stats poll the drop rates were last taken from, and when (polls come every 1-10 s on a thin link) */
@@ -138,6 +140,8 @@ export class Connection {
     readonly lease = new LeaseKeeper()
     /** topic key → the page's subscriptions on it (core/bandwidth.ts's overrides apply under each) */
     readonly consumers = new Store<Record<string, Consumer>>({})
+    /** what runs (core/runs.ts's RunWatch state): its runId says which run domain is the page's; unset = never leave the one it started in */
+    #run: (() => { known: boolean; runId: string | null }) | null = null
     /** topic key → messages the gateway dropped for the link in the last second (queue full, too old, part-sent), and since subscribing */
     readonly drops = new Store<Record<string, { perSecond: number; total: number }>>({})
 
@@ -179,6 +183,11 @@ export class Connection {
     /** The client a subscription may open on now: once connected. */
     #openable(): ZenohGateway | null {
         return this.client
+    }
+
+    /** Follows the run (its id picks the run domain, core/namespace.ts's pickDomain); call before start. */
+    followRun(run: () => { known: boolean; runId: string | null }) {
+        this.#run = run
     }
 
     /** A command is about to go out on `key` (drive, Joy, controls, arm, clicked point): the drive lease covers it. */
@@ -225,10 +234,33 @@ export class Connection {
         }, 1000)
         this.#lastRtt = { value: client.rttMs ?? null, at: performance.now() }
         const lastSeen = new Map<string, { topic: Topic; at: number }>()
+        // each run domain's keys, by when last seen (TOPIC_FORGET_MS, as topics)
+        const domainsSeen = new Map<string, number>()
+        const startedAt = Date.now()
+        const domain = activeDomain()
         for (;;) {
             try {
-                const found = await client.listTopics("dimos/**", { probeMs: 800 })
-                const seen = rememberTopics(lastSeen, found.map((topic) => parseKey(topic.key)).filter((topic): topic is Topic => topic !== null), Date.now())
+                const [plain, domained] = await Promise.all([client.listTopics("dimos/**", { probeMs: 800 }), client.listTopics("dimos-domains/**", { probeMs: 800 }).catch(() => [])])
+                const now = Date.now()
+                for (const name of seenDomains(domained.map((topic) => topic.key))) {
+                    domainsSeen.set(name, now)
+                }
+                for (const [name, at] of domainsSeen) {
+                    if (now - at > TOPIC_FORGET_MS) {
+                        domainsSeen.delete(name)
+                    }
+                }
+                const run = this.#run?.()
+                if (run?.known) {
+                    const next = domainChange([...domainsSeen.keys()], run.runId, domain, now - startedAt, TOPIC_FORGET_MS)
+                    if (next !== null) {
+                        chooseDomain(next)
+                        return
+                    }
+                }
+                // the page's run domain's streams by their dimos/ keys; with one, the plain dimos/ ones are Desktop's and other runs'
+                const ours = domain ? domained.filter((topic) => domainOf(topic.key) === domain).map((topic) => ({ ...topic, key: undomained(topic.key) })) : plain
+                const seen = rememberTopics(lastSeen, ours.map((topic) => parseKey(topic.key)).filter((topic): topic is Topic => topic !== null), now)
                 const topics = namespacedTopics(seen)
                 const namespaces = seenNamespaces(seen)
                 const before = this.status.get()

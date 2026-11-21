@@ -6,12 +6,18 @@
 // messages lose the frames' `robot1/` (it goes back on what the page sends). Desktop's own keys (dimos/events, the
 // gateways) are left alone. It's this page's own (this browser's, or the link's ?namespace=), so two windows can each
 // have a robot. A change reloads the page, so every subscription and publisher is made again under it.
+// The run domain is the same idea one level out: a hosted run (`dimos host`, every fragment pinned to its run's
+// zenoh_domain) puts its streams at `dimos-domains/<run id>/<topic>/<type>`; with one active the page sees them at
+// `dimos/<topic>/<type>` (toWire adds it last, fromWire takes it off first). Which one is the bus's call (chooseDomain:
+// the active run's id when its domain is there, else the newest one seen); a change reloads the page under it.
 // Pure parts: test/namespace.test.ts.
 import { Store } from "./store.ts"
 import { parseKey, type Topic } from "./transport.ts"
 import { readLocal, writeLocal } from "./videoQuality.ts"
 
 const STORAGE_KEY = "lv.namespace"
+/** the run domain the page last ran under: only where it starts, discovery corrects it (one reload) */
+const DOMAIN_KEY = "lv.runDomain"
 
 /** letters, digits and underscores, as dimos allows; nested ones joined by "/" (fleet/robot1); "" = none */
 export const cleanNamespace = (name: unknown) => {
@@ -54,7 +60,70 @@ export function setActiveNamespace(name: string) {
     active = cleanNamespace(name)
 }
 
-/** dimos keys that aren't topics: Desktop's events and the like, never namespaced */
+// ---- the run domain: `dimos-domains/<run id>/…` ----
+
+/** the run domain this page runs under ("" = none: streams at dimos/…), fixed until it reloads */
+let domain = ""
+export const activeDomain = () => domain
+
+/** dimos's zenoh_domain: letters, digits, `_`, `.`, `-`; "" = none */
+export const cleanDomain = (name: unknown) => typeof name === "string" && /^[A-Za-z0-9_.-]+$/.test(name) ? name : ""
+
+/** Takes the run domain the page last ran under (call once, before connecting). */
+export function startDomain() {
+    domain = cleanDomain(readLocal<string>(DOMAIN_KEY, ""))
+}
+
+/** for tests */
+export function setActiveDomain(name: string) {
+    domain = cleanDomain(name)
+}
+
+/** The page moves to another run domain ("" = none): kept for this browser, and the page reloads under it. */
+export function chooseDomain(name: string) {
+    writeLocal(DOMAIN_KEY, cleanDomain(name))
+    location.reload()
+}
+
+const DOMAIN_KEY_PATTERN = /^dimos-domains\/([A-Za-z0-9_.-]+)\//
+
+/** `dimos-domains/<d>/…` → d; else "" */
+export const domainOf = (key: string) => DOMAIN_KEY_PATTERN.exec(key)?.[1] ?? ""
+
+/** `dimos-domains/<d>/…` → `dimos/…`; anything else unchanged */
+export const undomained = (key: string) => key.replace(DOMAIN_KEY_PATTERN, "dimos/")
+
+/** the run domains keys are in, sorted */
+export const seenDomains = (keys: string[]) => [...new Set(keys.map(domainOf).filter(Boolean))].sort()
+
+/**
+ * The run domain the page belongs in: the running run's own (Desktop's /active runId) when it's on the bus; none when a
+ * run is running outside any (a plain `dimos run`); with no run known (a host machine whose run started elsewhere, or no
+ * Desktop), the current one while it's there, else the newest (run ids start with their date and time).
+ */
+export function pickDomain(domains: string[], runId: string | null, current: string): string {
+    if (runId) {
+        return domains.includes(runId) ? runId : ""
+    }
+    if (current && domains.includes(current)) {
+        return current
+    }
+    return [...domains].sort().at(-1) ?? ""
+}
+
+/**
+ * After a discovery round: the domain to reload under, or null to stay. A page that just came up under a domain whose
+ * streams it hasn't heard yet waits `settleMs` (the run may still be starting) before leaving it for none.
+ */
+export function domainChange(domains: string[], runId: string | null, current: string, uptimeMs: number, settleMs: number): string | null {
+    const wanted = pickDomain(domains, runId, current)
+    if (wanted === current || (!wanted && current && !domains.includes(current) && uptimeMs < settleMs)) {
+        return null
+    }
+    return wanted
+}
+
+/** dimos keys that aren't topics: Desktop's events and the like, never namespaced; dimos's RPCs (dimos/rpc/<name>) stay out of a run domain too */
 const SPECIAL = /^dimos\/(events|gateway|rpc)(\/|$)/
 
 /** where each topic the page sees is on the wire (its plain key → the wire key), set from discovery (namespacedTopics) */
@@ -65,15 +134,19 @@ let routes = new Map<string, string>()
  * one from an enclosing namespace or the global level); anything else (a topic only the page publishes, like cmd_vel)
  * into the namespace itself: `dimos/<topic>/<type>` → `dimos/<ns>/<topic>/<type>`.
  */
-export function toWire(key: string, namespace = active): string {
-    if (!namespace || !key.startsWith("dimos/") || SPECIAL.test(key)) {
+export function toWire(key: string, namespace = active, runDomain = domain): string {
+    if (!key.startsWith("dimos/") || SPECIAL.test(key)) {
         return key
     }
-    return routes.get(key) ?? `dimos/${namespace}/${key.slice("dimos/".length)}`
+    const named = namespace ? routes.get(key) ?? `dimos/${namespace}/${key.slice("dimos/".length)}` : key
+    return runDomain ? `dimos-domains/${runDomain}/${named.slice("dimos/".length)}` : named
 }
 
-/** The key on the wire → the page's key: the namespace (or the enclosing one it came from) taken off. */
-export function fromWire(key: string, namespace = active): string {
+/** The key on the wire → the page's key: the run domain, then the namespace (or the enclosing one it came from) taken off. */
+export function fromWire(key: string, namespace = active, runDomain = domain): string {
+    if (runDomain && key.startsWith(`dimos-domains/${runDomain}/`)) {
+        key = `dimos/${key.slice(`dimos-domains/${runDomain}/`.length)}`
+    }
     for (const level of levelsOf(namespace)) {
         if (level && key.startsWith(`dimos/${level}/`)) {
             return `dimos/${key.slice(`dimos/${level}/`.length)}`
@@ -229,14 +302,16 @@ export function forgetFrames() {
 const KEYED = new Set(["publisher", "get", "querier", "put", "delete", "declareQueryable", "declareToken", "livelinessGet", "matchingStatus", "matchingListener"])
 
 /**
- * The zenoh-gateway client with every dimos key mapped into the namespace: subscriptions (their messages come back
- * with the page's key), publishers, puts, gets, the lease's keys. Topic discovery (listTopics) stays raw: the
- * transport lists everything and picks (namespacedTopics). Without a namespace it's the client itself.
+ * The zenoh-gateway client with every dimos key mapped into the namespace and the run domain: subscriptions (their
+ * messages come back with the page's key), publishers, puts, gets, the lease's keys. Topic discovery (listTopics) stays
+ * raw: the transport lists everything and picks (namespacedTopics). Without either it's the client itself.
  */
-export function namespacedClient<T extends object>(client: T, namespace = active): T {
-    if (!namespace) {
+export function namespacedClient<T extends object>(client: T, namespace = active, runDomain = domain): T {
+    if (!namespace && !runDomain) {
         return client
     }
+    const toWireKey = (key: string) => toWire(key, namespace, runDomain)
+    const fromWireKey = (key: string) => fromWire(key, namespace, runDomain)
     return new Proxy(client, {
         get(target, prop) {
             const value = Reflect.get(target, prop, target)
@@ -245,17 +320,17 @@ export function namespacedClient<T extends object>(client: T, namespace = active
             }
             if (prop === "subscribe" || prop === "livelinessSubscribe") {
                 return (key: string, options: unknown, callback: (message: { key: string }) => void) =>
-                    value.call(target, toWire(key, namespace), options, (message: { key: string }) =>
-                        callback(message && typeof message.key === "string" ? Object.assign(message, { key: fromWire(message.key, namespace) }) : message))
+                    value.call(target, toWireKey(key), options, (message: { key: string }) =>
+                        callback(message && typeof message.key === "string" ? Object.assign(message, { key: fromWireKey(message.key) }) : message))
             }
             if (KEYED.has(prop as string)) {
-                return (key: unknown, ...rest: unknown[]) => value.call(target, typeof key === "string" ? toWire(key, namespace) : key, ...rest)
+                return (key: unknown, ...rest: unknown[]) => value.call(target, typeof key === "string" ? toWireKey(key) : key, ...rest)
             }
             if (prop === "lease") {
                 return (options: unknown, ...rest: unknown[]) => {
                     if (options && typeof options === "object") {
                         const lease = options as { publish?: string[]; subscribe?: string[] }
-                        options = { ...lease, publish: lease.publish?.map((key) => toWire(key, namespace)), subscribe: lease.subscribe?.map((key) => toWire(key, namespace)) }
+                        options = { ...lease, publish: lease.publish?.map((key) => toWireKey(key)), subscribe: lease.subscribe?.map((key) => toWireKey(key)) }
                     }
                     return value.call(target, options, ...rest)
                 }

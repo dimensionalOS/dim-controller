@@ -80,6 +80,7 @@ export class DriveCore {
         feedBattery(this.connection, () => this.profile.name)
         feedNavStatus(this.connection)
         this.connection.status.subscribe(() => this.#updateDriveCandidates())
+        this.connection.followRun(() => this.runs.state.get())
         this.connection.start()
         this.runs.state.subscribe(() => {
             this.#updateDriveCandidates()
