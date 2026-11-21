@@ -8,6 +8,7 @@ import { checkTf, confirmed, fixedFrameInUse, missingFixedFrameIssue, type TfIss
 import { Viewer } from "dimos-react/three"
 import { watchSplatBudget } from "./render/rendering.ts"
 import { FrameHighlight } from "./render/frameHighlight.ts"
+import { DEFAULT_CEILING_Z, watchCeiling } from "./render/ceiling.ts"
 import { LayerManager } from "./layers/manager.ts"
 import { HIDDEN_GRACE_MS, setHiddenGraceMs, VideoSources } from "./video.ts"
 import type { Drive } from "./drive.ts"
@@ -95,10 +96,12 @@ export class ViewerApp {
         this.arm = core.arm
         this.runs = core.runs
         // (MSAA: without it voxel and mesh edges stair-step, even at a retina 2x)
-        this.viewer = new Viewer(host, { clock: () => this.connection.bridgeNow(), antialias: true })
+        this.viewer = new Viewer(host, { clock: () => this.connection.bridgeNow(), antialias: true, freeOrbit: true })
         // a drag pans (Shift+drag orbits: OrbitControls turns a modified pan into an orbit); a right-drag orbits
         this.viewer.controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
         watchSplatBudget(this.viewer)
+        watchCeiling(this.viewer, () => (this.settings.get().ceilingCut ? this.settings.get().ceilingZ ?? DEFAULT_CEILING_Z : null))
+        this.settings.subscribe(() => this.viewer.requestRender())
         this.highlight = new FrameHighlight(this.viewer, this.tf)
         this.video = new VideoSources(this.connection)
         const applyGrace = () => setHiddenGraceMs((this.settings.get().cameraHiddenGraceS ?? HIDDEN_GRACE_MS / 1000) * 1000)

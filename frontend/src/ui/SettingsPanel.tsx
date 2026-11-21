@@ -23,6 +23,7 @@ import { CUBE_SHADES } from "dimos-react/three"
 import type { CubeShade, PointStyle } from "../core/render/rendering.ts"
 import { MESH_STYLES, type MeshStyle } from "../core/render/meshStyle.ts"
 import { Stepper } from "./Stepper.tsx"
+import { DEFAULT_CEILING_Z } from "../core/render/ceiling.ts"
 import { RESUBSCRIBE_MS, STALL_MS } from "../core/video.ts"
 import { MESH_RETRY_MS } from "../core/urdfSource.ts"
 import { activeNamespace, chooseNamespace } from "../core/namespace.ts"
@@ -119,6 +120,12 @@ export function SceneSettings({ app }: { app: ViewerApp }) {
             {render.meshStyle === "wireframe" && (
                 <Field inline label="Wireframe color"><ColorSwatch value={render.wireframeColor} onChange={(wireframeColor: string) => rendering.update({ wireframeColor })} /></Field>
             )}
+            <Field inline label="Cut above" title="nothing higher than this (z in the fixed frame) is drawn, so a ceiling can be cut away to look in from above">
+                <Toggle data-testid="ceiling-cut" value={view.ceilingCut === true} onChange={(ceilingCut: any) => app.settings.update({ ceilingCut })} />
+                {view.ceilingCut === true && (
+                    <Stepper label="Cut height" min={-10} max={50} step={0.1} value={view.ceilingZ ?? DEFAULT_CEILING_Z} format={(z) => `${z.toFixed(1)} m`} onChange={(ceilingZ) => app.settings.update({ ceilingZ })} />
+                )}
+            </Field>
             <Field inline label="Robot model" title="the robot's URDF when it publishes one, else a box at its pose (an arm is drawn by its TF frames)"><Toggle value={view.robotModel !== false} onChange={(robotModel: any) => app.settings.update({ robotModel })} /></Field>
             <Field inline label="View cube" title="a cube in the 3D view's top-right corner: click a face, edge or corner to look from there, drag it to orbit"><Toggle value={view.viewCube === true} onChange={(viewCube: any) => app.settings.update({ viewCube })} /></Field>
             <p className="hint">Drag to pan · Shift+drag or right-drag to orbit · scroll or pinch to zoom.</p>

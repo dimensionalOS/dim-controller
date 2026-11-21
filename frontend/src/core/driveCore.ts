@@ -37,6 +37,10 @@ export interface ViewSettings {
     camerasIn3d: boolean
     /** the CAD view cube in the 3D view's top-right corner (click a face to look from there) */
     viewCube: boolean
+    /** the 3D view draws nothing above ceilingZ (core/render/ceiling.ts) */
+    ceilingCut?: boolean
+    /** the ceiling cut's height in the fixed frame (m; unset: 2) */
+    ceilingZ?: number
     /** how long a hidden tab keeps its cameras subscribed (s; unset: 60) */
     cameraHiddenGraceS?: number
     /** a camera with no new picture for this long says "slow / stopped link" (s; unset: 1) */
