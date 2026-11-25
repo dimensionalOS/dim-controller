@@ -14,6 +14,7 @@ import { type UrdfSource, urdfSource } from "../core/urdfSource.ts"
 import { ensureSparkRenderer, splatFiles } from "../core/splats.ts"
 import { rendering } from "../core/render/rendering.ts"
 import { applyMeshStyle } from "../core/render/meshStyle.ts"
+import { type HardwareSource, hardwareSource } from "../core/hardwareFiles.ts"
 
 export interface RobotModelSettings {
     opacity: number
@@ -37,6 +38,8 @@ export interface RobotModelSettings {
 class RobotModelLayer {
     readonly root = new THREE.Group()
     #source: UrdfSource
+    /** each HardwareModule's own USD (the Hardware layer): while any is drawn, a composed world USD would draw them twice */
+    #hardware: HardwareSource
     #release: () => void
     #stopState: () => void
     #stopRendering: () => void
@@ -49,6 +52,7 @@ class RobotModelLayer {
     constructor(readonly context: LayerContext, readonly settings: Store<RobotModelSettings>) {
         this.root.matrixAutoUpdate = false
         this.#source = urdfSource(context.connection)
+        this.#hardware = hardwareSource(context.connection, context.tf)
         this.#release = this.#source.acquire()
         this.#stopState = this.#source.state.subscribe(() => this.#sync())
         settings.subscribe(() => this.#rebuild())
@@ -106,9 +110,16 @@ class RobotModelLayer {
         }
     }
 
+    #wasSuperseded = false
+    /** a world USD (a sim's, every part grafted in) while HardwareModules draw their own parts */
+    #superseded(): boolean {
+        return this.#source.state.get().kind === "USD" && [...this.#hardware.state.get().modules.values()].some((module) => module.description)
+    }
+
     #problem: string | null = null
     #status() {
         const { description, meshesLoaded, meshesWanted, problem, armDraws } = this.#source.state.get()
+        const supersededText = this.#superseded() ? " · not drawn: each HardwareModule draws its own (Hardware layer)" : ""
         if (!description) {
             this.context.setStatus({ info: "waiting for the URDF (asked on /render_file_request and /file_request)", problem })
             return
@@ -117,7 +128,7 @@ class RobotModelLayer {
         const splatCount = [...this.#source.splats.values()].reduce((sum, splats) => sum + splats.count, 0)
         const splats = splatCount ? ` · ${(splatCount / 1e6).toFixed(2)}M splats` : ""
         this.context.setStatus({
-            info: `${description.name}: ${description.links.length} links${meshes}${splats}${armDraws ? " · drawn by the arm view" : ""}`,
+            info: `${description.name}: ${description.links.length} links${meshes}${splats}${armDraws ? " · drawn by the arm view" : ""}${supersededText}`,
             problem: this.#problem ?? problem,
             frame: description.base_link,
         })
@@ -137,7 +148,12 @@ class RobotModelLayer {
         const kinematics = this.#kinematics
         const root = kinematics?.root
         const placed = root ? inFrame(root) : null
-        const show = !!model && !!placed && !this.#source.state.get().armDraws
+        const superseded = this.#superseded()
+        if (superseded !== this.#wasSuperseded) {
+            this.#wasSuperseded = superseded
+            this.#status()
+        }
+        const show = !!model && !!placed && !this.#source.state.get().armDraws && !superseded
         if (this.root.visible !== show) {
             this.root.visible = show
             this.context.viewer.requestRender()

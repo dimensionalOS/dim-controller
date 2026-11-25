@@ -1,7 +1,7 @@
 // Each dimos HardwareModule's own USD and assets (dimos/core/hardware_module.py), one model per module namespace, found from tf with no polling
 // A new frame `a/b/link` asks hardware.usda on a/b, a and the top level's hardware_file_request; every answer comes on **/hardware_file_response
 import type * as THREE from "three"
-import { meshGeometry, meshUris, type TfTree } from "dimos-react/three"
+import { meshGeometry, meshTextures, meshUris, type TfTree } from "dimos-react/three"
 import type { Kinematics } from "./robotDescription.ts"
 import { Store } from "./store.ts"
 import { type Connection, dimosKey, Priority, type Publisher } from "./transport.ts"
@@ -10,6 +10,7 @@ import { cachedBytes, knownHash, rememberHash, storeBytes } from "./hardwareCach
 import { usdAssetHashes, usdParser } from "./usd.ts"
 import { imageTexture, isImage } from "./imageTexture.ts"
 import { meshLog } from "./meshCache.ts"
+import { stripFrame } from "./namespace.ts"
 import type { RobotDescription } from "./robotDescription.ts"
 
 /** the name every HardwareModule serves its USD as */
@@ -34,12 +35,12 @@ export function framePrefixes(frame: string): string[] {
     return parts.map((_, index) => parts.slice(0, parts.length - index).join("/")).concat("")
 }
 
-/** a module's link's tf frame: the link as named when the USD already has the namespace on it, else under it */
-export const moduleFrame = (namespace: string, link: string) => !namespace || link.startsWith(`${namespace}/`) ? link : `${namespace}/${link}`
+/** a link's tf frame: dimos names a served USD's frames by their tf names (prefix_usd_frames), so only the page's own namespace comes off, as it does tf's */
+export const moduleFrame = (link: string) => stripFrame(link)
 
 /** Every link of a module's USD in the fixed frame: at its own tf frame, else its root's through the joints; null while tf has no root frame. */
-export function modulePoses(kinematics: Kinematics, namespace: string, inFixed: (frame: string) => THREE.Matrix4 | null): Map<string, THREE.Matrix4> | null {
-    const at = (link: string) => inFixed(moduleFrame(namespace, link))
+export function modulePoses(kinematics: Kinematics, inFixed: (frame: string) => THREE.Matrix4 | null): Map<string, THREE.Matrix4> | null {
+    const at = (link: string) => inFixed(moduleFrame(link))
     const rootPose = at(kinematics.root)
     if (!rootPose) {
         return null
@@ -64,8 +65,10 @@ export interface HardwareModule {
     /** its meshes and images by the uri its USD names (relative to the module), filled in as they come */
     geometries: Map<string, THREE.BufferGeometry>
     textures: Map<string, THREE.Texture>
-    /** every file its USD names */
+    /** every file its USD names, and the images its mesh layers name (relative to the module) */
     files: string[]
+    /** files the module names but answered it can't serve (a header with no sha256) */
+    unservable: Set<string>
     problem: string | null
 }
 
@@ -80,7 +83,7 @@ const splitName = (key: string) => {
     const at = key.indexOf("\n")
     return { namespace: key.slice(0, at), uri: key.slice(at + 1) }
 }
-const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], problem })
+const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), problem })
 
 export class HardwareSource {
     readonly state = new Store<HardwareState>({ modules: new Map(), version: 0 })
@@ -98,6 +101,8 @@ export class HardwareSource {
     #waiting = new Map<string, Set<string>>()
     /** sha256 → its mesh or image, decoded once for every module that names it */
     #decoded = new Map<string, Promise<THREE.BufferGeometry | THREE.Texture>>()
+    /** module files already said in the console to be unservable */
+    #saidUnservable = new Set<string>()
 
     constructor(readonly connection: Connection, readonly tf: TfTree) {}
 
@@ -234,7 +239,12 @@ export class HardwareSource {
         this.#outstanding.delete(nameKey(namespace, HARDWARE_USD))
         const sha256 = info.sha256 ?? null
         const drawn = this.state.get().modules.get(namespace)
-        if (!this.#users || (!sha256 && !info.content) || (drawn?.sha256 === sha256 && (drawn.description || drawn.problem))) {
+        if (!this.#users || (drawn?.sha256 === sha256 && (drawn.description || drawn.problem))) {
+            return
+        }
+        if (!sha256 && !info.content) {
+            this.#sayUnservable(namespace, HARDWARE_USD)
+            this.#setModule(blank(namespace, null, `${namespace || "the top level"} names ${HARDWARE_USD} but can't serve it (no pxr there?)`))
             return
         }
         this.#setModule(blank(namespace, sha256))
@@ -310,10 +320,40 @@ export class HardwareSource {
         }
     }
 
-    /** a module's current USD names this file and it isn't in yet */
+    /** a module's current USD names this file, it isn't in yet, and the module hasn't said it can't serve it */
     #isWanted(namespace: string, uri: string): boolean {
         const module = this.state.get().modules.get(namespace)
-        return !!module?.files.includes(uri) && !module.geometries.has(uri) && !module.textures.has(uri)
+        return !!module?.files.includes(uri) && !module.geometries.has(uri) && !module.textures.has(uri) && !module.unservable.has(uri)
+    }
+
+    #sayUnservable(namespace: string, uri: string) {
+        const name = nameKey(namespace, uri)
+        if (!this.#saidUnservable.has(name)) {
+            this.#saidUnservable.add(name)
+            meshLog(`hardware ${namespace || "(top level)"} names ${uri} but can't serve it: not drawn`)
+        }
+    }
+
+    /** a header with no sha256: given up on, uncached, and another module waiting for the same bytes asks its own */
+    #onUnservable(namespace: string, uri: string) {
+        this.#sayUnservable(namespace, uri)
+        const module = this.state.get().modules.get(namespace)
+        if (module?.files.includes(uri)) {
+            module.unservable.add(uri)
+            module.problem = `can't be served: ${[...module.unservable].join(", ")}`
+            this.#changed()
+        }
+        const name = nameKey(namespace, uri)
+        for (const [sha256, names] of this.#waiting) {
+            if (names.delete(name)) {
+                const next = [...names][0]
+                if (next) {
+                    this.#request(splitName(next).namespace, splitName(next).uri)
+                } else {
+                    this.#waiting.delete(sha256)
+                }
+            }
+        }
     }
 
     async #onAsset(namespace: string, info: FileInfo) {
@@ -323,6 +363,10 @@ export class HardwareSource {
             return
         }
         this.#outstanding.delete(nameKey(namespace, info.uri))
+        if (!sha256 && !info.content) {
+            this.#onUnservable(namespace, info.uri)
+            return
+        }
         if (!info.content) {
             const kept = sha256 ? await cachedBytes(sha256) : null
             if (kept) {
@@ -369,6 +413,13 @@ export class HardwareSource {
                 module.textures.set(uri, value as THREE.Texture)
             } else {
                 module.geometries.set(uri, value as THREE.BufferGeometry)
+                // a mesh layer's images, named against the layer's own uri and so relative to the module too
+                for (const image of meshTextures(value as THREE.BufferGeometry)) {
+                    if (!module.files.includes(image)) {
+                        module.files.push(image)
+                        this.#wantAsset(module, image, null)
+                    }
+                }
             }
             this.#changed()
         }, (error) => {

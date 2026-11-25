@@ -8,6 +8,7 @@ import { Store } from "../src/core/store.ts"
 import type { Connection, ConnectionState } from "../src/core/transport.ts"
 import { decodeFileInfo, encodeFileInfo, type FileInfo } from "../src/core/fileInfo.ts"
 import { cachedBytes, resetHardwareCache } from "../src/core/hardwareCache.ts"
+import { forgetFrames, setActiveNamespace } from "../src/core/namespace.ts"
 import { framePrefixes, HARDWARE_RESPONSES, HARDWARE_USD, HardwareSource, moduleFrame, modulePoses, namespaceOfKey, requestKey } from "../src/core/hardwareFiles.ts"
 
 const global = globalThis as { indexedDB?: IDBFactory }
@@ -26,8 +27,8 @@ async function sha256(bytes: Uint8Array): Promise<string> {
     return "sha256:" + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
-/** a module's USD as dimos serves it: one arm link with one mesh named relative to the module, hashed in assetInfo */
-const usd = (hash: string, mesh = "meshes/arm.stl", note = "") => `#usda 1.0
+/** a module's USD as dimos serves it: one link whose display name is its tf frame (prefix_usd_frames), one mesh named "<prim path>/<file>" relative to the module and hashed in assetInfo */
+const usd = (hash: string, { frame = "base_link", mesh = MESH_NAME, note = "" } = {}) => `#usda 1.0
 (
     defaultPrim = "arm"
     metersPerUnit = 1
@@ -38,6 +39,7 @@ def Xform "arm"
 {
     def Xform "base_link" (
         prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "${frame}"
     )
     {
         def Mesh "visual_0" (
@@ -53,9 +55,12 @@ def Xform "arm"
 }
 `
 
+const MESH_NAME = "arm/base_link/visual_0/arm.stl"
 const MESH = stl()
 const MESH_HASH = await sha256(MESH)
-const ARM = new TextEncoder().encode(usd(MESH_HASH))
+const usdBytes = (...args: Parameters<typeof usd>) => new TextEncoder().encode(usd(...args))
+const DOG = usdBytes(MESH_HASH, { frame: "go2/base_link" })
+const LIDAR = usdBytes(MESH_HASH, { frame: "go2/lidar/base_link" })
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 async function until(done: () => boolean) {
@@ -90,14 +95,17 @@ async function withCache(factory: IDBFactory | null, run: () => Promise<void>) {
     }
 }
 
-type Files = Map<string, Uint8Array>
+/** a file a module names; null: named but it can't serve it (it answers a header with no sha256) */
+type Files = Map<string, Uint8Array | null>
 
 /** A gateway with HardwareModules on it: each answers on its own namespace as dimos's HardwareModule does (header only when the asker's hash is current, nothing for a uri it doesn't serve). */
 async function bus(modules: Record<string, Files>) {
     const hashes = new Map<Uint8Array, string>()
     for (const files of Object.values(modules)) {
         for (const bytes of files.values()) {
-            hashes.set(bytes, await sha256(bytes))
+            if (bytes) {
+                hashes.set(bytes, await sha256(bytes))
+            }
         }
     }
     const requests: { namespace: string; info: FileInfo }[] = []
@@ -113,6 +121,10 @@ async function bus(modules: Record<string, Files>) {
                     const info = decodeFileInfo(bytes)
                     requests.push({ namespace, info })
                     const file = modules[namespace]?.get(info.uri)
+                    if (file === null) {
+                        respond(namespace, { ts: 1, uri: info.uri })
+                        return
+                    }
                     if (!file) {
                         return
                     }
@@ -160,12 +172,19 @@ Deno.test("pure parts: a response's namespace from its key, a frame's candidate 
     assertEquals(requestKey(""), "dimos/hardware_file_request/files.FileInfo")
     assertEquals(framePrefixes("a/b/link"), ["a/b", "a", ""])
     assertEquals(framePrefixes("base_link"), [""])
-    assertEquals([moduleFrame("go2", "base_link"), moduleFrame("go2", "go2/base_link"), moduleFrame("", "base_link")], ["go2/base_link", "go2/base_link", "base_link"])
+    assertEquals(moduleFrame("go2/lidar/base_link"), "go2/lidar/base_link", "a served USD's link names are already tf's")
+    setActiveNamespace("robot1")
+    try {
+        assertEquals(moduleFrame("robot1/go2/base_link"), "go2/base_link", "the page's own namespace comes off, as it does tf's")
+    } finally {
+        setActiveNamespace("")
+        forgetFrames()
+    }
 })
 
 Deno.test("tf frames find the modules: hardware.usda asked once per namespace, a mesh two modules share fetched once, nothing more without a new frame", async () => {
     await withCache(new IDBFactory(), async () => {
-        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", MESH]]), "go2/lidar": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", MESH]]) })
+        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, DOG], [MESH_NAME, MESH]]), "go2/lidar": new Map([[HARDWARE_USD, LIDAR], [MESH_NAME, MESH]]) })
         const tf = robotTf()
         const source = new HardwareSource(connection, tf)
         const release = source.acquire()
@@ -173,10 +192,10 @@ Deno.test("tf frames find the modules: hardware.usda asked once per namespace, a
         assertEquals(usdRequests(requests).map((request) => request.namespace).sort(), ["", "go2", "go2/lidar"], "every prefix of every frame, each once")
         assertEquals(usdRequests(requests).every((request) => request.info.sha256 === undefined && request.info.content === undefined), true, "nothing cached yet: plain header requests")
         assertEquals([...source.state.get().modules.keys()].sort(), ["go2", "go2/lidar"], "the top level never answered, so it has no module")
-        assertEquals(source.state.get().modules.get("go2")?.description?.links.map((link) => link.name), ["base_link"])
-        const meshRequests = requests.filter((request) => request.info.uri === "meshes/arm.stl")
+        assertEquals(source.state.get().modules.get("go2")?.description?.links.map((link) => link.name), ["go2/base_link"], "links by their tf names")
+        const meshRequests = requests.filter((request) => request.info.uri === MESH_NAME)
         assertEquals(meshRequests.length, 1, "one mesh both modules name: asked for once")
-        assertEquals(source.state.get().modules.get("go2")?.geometries.get("meshes/arm.stl"), source.state.get().modules.get("go2/lidar")?.geometries.get("meshes/arm.stl"), "and decoded once")
+        assertEquals(source.state.get().modules.get("go2")?.geometries.get(MESH_NAME), source.state.get().modules.get("go2/lidar")?.geometries.get(MESH_NAME), "and decoded once")
         assertEquals((await cachedBytes(MESH_HASH))?.length, MESH.length, "cached under its sha256")
         const before = requests.length
         tf.set("world", "go2/base_link", [2, 0, 0], identity)
@@ -191,7 +210,7 @@ Deno.test("tf frames find the modules: hardware.usda asked once per namespace, a
 
 Deno.test("a reload: the USD asked for with its cached hash, a header-only reply draws it from the cache, no asset fetched", async () => {
     await withCache(new IDBFactory(), async () => {
-        const modules = { "go2": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", MESH]]) }
+        const modules = { "go2": new Map([[HARDWARE_USD, DOG], [MESH_NAME, MESH]]) }
         const first = await bus(modules)
         const one = new HardwareSource(first.connection, robotTf())
         const releaseOne = one.acquire()
@@ -204,7 +223,7 @@ Deno.test("a reload: the USD asked for with its cached hash, a header-only reply
         const releaseTwo = two.acquire()
         await until(() => loaded(two, "go2") === 1)
         const asked = usdRequests(second.requests).find((request) => request.namespace === "go2")!
-        assertEquals(asked.info.sha256, await sha256(ARM), "conditional: the hash it has")
+        assertEquals(asked.info.sha256, await sha256(DOG), "conditional: the hash it has")
         assertEquals(second.requests.filter((request) => request.info.uri !== HARDWARE_USD), [], "the mesh's hash is cached: never asked for")
         assertEquals(loaded(two, "go2"), 1, "drawn from the cache")
         releaseTwo()
@@ -213,12 +232,12 @@ Deno.test("a reload: the USD asked for with its cached hash, a header-only reply
 
 Deno.test("a start announcement with a new hash replaces what's drawn there; the unchanged mesh comes from the cache", async () => {
     await withCache(new IDBFactory(), async () => {
-        const { connection, requests, restart } = await bus({ "go2": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", MESH]]) })
+        const { connection, requests, restart } = await bus({ "go2": new Map([[HARDWARE_USD, DOG], [MESH_NAME, MESH]]) })
         const source = new HardwareSource(connection, robotTf())
         const release = source.acquire()
         await until(() => loaded(source, "go2") === 1)
         const old = source.state.get().modules.get("go2")
-        const edited = new TextEncoder().encode(usd(MESH_HASH, "meshes/arm.stl", "# the module restarted with an edited USD"))
+        const edited = usdBytes(MESH_HASH, { frame: "go2/base_link", note: "# the module restarted with an edited USD" })
         const before = requests.length
         await restart("go2", HARDWARE_USD, edited)
         await until(() => source.state.get().modules.get("go2") !== old && loaded(source, "go2") === 1)
@@ -236,12 +255,12 @@ Deno.test("a start announcement with a new hash replaces what's drawn there; the
 
 Deno.test("no IndexedDB: everything is fetched and still drawn", async () => {
     await withCache(null, async () => {
-        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", MESH]]) })
+        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, DOG], [MESH_NAME, MESH]]) })
         const source = new HardwareSource(connection, robotTf())
         const release = source.acquire()
         await until(() => loaded(source, "go2") === 1)
         assertEquals(loaded(source, "go2"), 1)
-        assertEquals(requests.filter((request) => request.info.uri === "meshes/arm.stl").length, 1)
+        assertEquals(requests.filter((request) => request.info.uri === MESH_NAME).length, 1)
         release()
     })
 })
@@ -249,12 +268,12 @@ Deno.test("no IndexedDB: everything is fetched and still drawn", async () => {
 Deno.test("a file whose bytes aren't the hash it came with is drawn but not cached", async () => {
     await withCache(new IDBFactory(), async () => {
         const wrong = stl(1)
-        const { connection } = await bus({ "go2": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", wrong]]) })
+        const { connection } = await bus({ "go2": new Map([[HARDWARE_USD, DOG], [MESH_NAME, wrong]]) })
         // the module claims the USD's hash for the other bytes
         const lying = { ...connection, subscribe: (key: string, options: unknown, callback: (message: { key: string; bytes: Uint8Array }) => void) =>
             connection.subscribe(key, options as never, (message) => {
                 const info = decodeFileInfo(message.bytes)
-                callback(info.uri === "meshes/arm.stl" ? { ...message, bytes: encodeFileInfo({ ...info, sha256: MESH_HASH }) } : message)
+                callback(info.uri === MESH_NAME ? { ...message, bytes: encodeFileInfo({ ...info, sha256: MESH_HASH }) } : message)
             }) } as unknown as Connection
         const source = new HardwareSource(lying, robotTf())
         const release = source.acquire()
@@ -268,7 +287,7 @@ Deno.test("a file whose bytes aren't the hash it came with is drawn but not cach
 
 Deno.test("the link coming back: what nobody answered is asked again, a drawn module asked conditionally", async () => {
     await withCache(new IDBFactory(), async () => {
-        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, ARM], ["meshes/arm.stl", MESH]]) })
+        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, DOG], [MESH_NAME, MESH]]) })
         const source = new HardwareSource(connection, robotTf())
         const release = source.acquire()
         await until(() => loaded(source, "go2") === 1)
@@ -279,17 +298,53 @@ Deno.test("the link coming back: what nobody answered is asked again, a drawn mo
         await wait(20)
         const again = usdRequests(requests.slice(before))
         assertEquals(again.map((request) => request.namespace).sort(), ["", "go2", "go2/lidar"], "each once: the two that never answered, and go2 in case it restarted unseen")
-        assertEquals(again.find((request) => request.namespace === "go2")?.info.sha256, await sha256(ARM), "go2 conditionally, with the hash it has")
+        assertEquals(again.find((request) => request.namespace === "go2")?.info.sha256, await sha256(DOG), "go2 conditionally, with the hash it has")
         await wait(20)
         assertEquals(requests.slice(before).filter((request) => request.info.uri !== HARDWARE_USD), [], "an unchanged USD: nothing fetched again")
         release()
     })
 })
 
-Deno.test("a module's links placed at its namespace's tf frames, its root by tf", () => {
+Deno.test("a header with no sha256 is a file named but not servable: given up on, not cached, asked no more", async () => {
+    await withCache(new IDBFactory(), async () => {
+        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, null]]), "go2/lidar": new Map([[HARDWARE_USD, LIDAR], [MESH_NAME, null]]) })
+        const tf = robotTf()
+        const source = new HardwareSource(connection, tf)
+        const release = source.acquire()
+        await until(() => source.state.get().modules.size === 2 && !!source.state.get().modules.get("go2/lidar")?.unservable.size)
+        const dog = source.state.get().modules.get("go2")!
+        assertEquals([dog.description, dog.problem?.includes("can't serve")], [null, true], "a module without pxr: answered, nothing drawn")
+        const lidar = source.state.get().modules.get("go2/lidar")!
+        assertEquals([lidar.description?.links.length, [...lidar.unservable], loaded(source, "go2/lidar")], [1, [MESH_NAME], 0])
+        await wait(20)
+        const before = requests.length
+        tf.set("go2/base_link", "go2/foot", [0, 0, -0.3], identity)
+        await wait(20)
+        assertEquals(requests.slice(before).map((request) => `${request.namespace}:${request.info.uri}`), [":hardware.usda"], "go2 answered, so isn't asked again; nor the mesh")
+        assertEquals(await cachedBytes(MESH_HASH), null)
+        release()
+    })
+})
+
+Deno.test("a mesh layer's image is fetched by the module, named against the layer's own uri", async () => {
+    await withCache(new IDBFactory(), async () => {
+        const layer = new Uint8Array(Deno.readFileSync(new URL("./fixtures/textured.usda", import.meta.url)))
+        const name = "arm/base_link/visual_0/geometry/textured.usda"
+        const module = usdBytes(await sha256(layer), { frame: "go2/base_link", mesh: name })
+        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, module], [name, layer]]) })
+        const source = new HardwareSource(connection, robotTf())
+        const release = source.acquire()
+        await until(() => requests.some((request) => request.info.uri.endsWith(".png")))
+        assertEquals(loaded(source, "go2"), 1, "the mesh layer read as a mesh")
+        assertEquals(requests.filter((request) => request.info.uri.endsWith(".png")).map((request) => `${request.namespace}:${request.info.uri}`), ["go2:arm/base_link/visual_0/textures/wood.png"], "its ../textures/wood.png, from the same module")
+        release()
+    })
+})
+
+Deno.test("a module's links placed at their tf frames, its root by tf", () => {
     const tf = robotTf()
-    const kinematics = new Kinematics({ name: "arm", base_link: "base_link", base_frame: "base_link", base_pose: { xyz: [0, 0, 0], quat: [0, 0, 0, 1] }, joint_names: [], joints: [], links: [{ name: "base_link", visuals: [], collisions: [] }] })
-    const poses = modulePoses(kinematics, "go2/lidar", (frame) => tf.lookup(frame, "world"))!
-    assertEquals(new THREE.Vector3().setFromMatrixPosition(poses.get("base_link")!).toArray(), [1, 0, 0.3], "the lidar's base_link under the dog's")
-    assertEquals(modulePoses(kinematics, "spot", (frame) => tf.lookup(frame, "world")), null, "no tf for its root: not placed")
+    const kinematicsOf = (root: string) => new Kinematics({ name: "arm", base_link: root, base_frame: root, base_pose: { xyz: [0, 0, 0], quat: [0, 0, 0, 1] }, joint_names: [], joints: [], links: [{ name: root, visuals: [], collisions: [] }] })
+    const poses = modulePoses(kinematicsOf("go2/lidar/base_link"), (frame) => tf.lookup(frame, "world"))!
+    assertEquals(new THREE.Vector3().setFromMatrixPosition(poses.get("go2/lidar/base_link")!).toArray(), [1, 0, 0.3], "the lidar's base_link under the dog's")
+    assertEquals(modulePoses(kinematicsOf("spot/base_link"), (frame) => tf.lookup(frame, "world")), null, "no tf for its root: not placed")
 })

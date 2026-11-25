@@ -191,6 +191,21 @@ Deno.test("a layer whose assets carry no hash is cached under the layer's own ha
     })
 })
 
+Deno.test("publish_usd_assets's relative names (<prim path>/<file>, no /dimos/assets/): read by the bundled parser, asked for and cached as named", async () => {
+    const bundled = installUsdParser(null)
+    installUsdParser(bundled)
+    const mesh = "little_arm/base_link/upper_arm/visual_0/arm.stl"
+    const layer = LAYER.replaceAll(MESH, mesh)
+    await withUsd(bundled, async () => {
+        const first = await load({ layer, mesh })
+        assertEquals([first.problem, first.loaded, first.wanted], [null, 1, 1])
+        assertEquals(first.requests, ["*.urdf", "*.usd", mesh], "asked for by the relative name, untouched")
+        assertEquals((await cachedFile(mesh))?.hash, HASH)
+        resetCacheConnection()
+        assertEquals((await load({ layer, mesh })).requests, ["*.urdf", "*.usd"], "from the cache on a reload")
+    })
+})
+
 Deno.test("three robots in one layer sharing one mesh: the file is asked for once", async () => {
     // fixtures/three_arms.usda is a real grafted scene: one arm plus a "left/…" and a "right/…" copy of it, its assets
     // renamed to the public paths publish_usd_assets hands out. The three name one file between them (51 references to

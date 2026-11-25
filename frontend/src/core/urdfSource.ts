@@ -63,10 +63,12 @@ export interface UrdfState {
     drawing: number
     /** the arm view draws the robot itself: the layer steps aside */
     armDraws: boolean
+    /** which kind the description in use is (null: none yet) */
+    kind: "URDF" | "USD" | null
 }
 
 export class UrdfSource {
-    readonly state = new Store<UrdfState>({ description: null, meshesLoaded: 0, meshesWanted: 0, meshVersion: 0, problem: null, drawing: 0, armDraws: false })
+    readonly state = new Store<UrdfState>({ description: null, meshesLoaded: 0, meshesWanted: 0, meshVersion: 0, problem: null, drawing: 0, armDraws: false, kind: null })
     /** loaded meshes by URI (as the URDF names them), shared by every model built from the description (never disposed by a model) */
     readonly geometries = new Map<string, THREE.BufferGeometry>()
     /** images a material named, decoded ready to be tiled over a shape */
@@ -246,7 +248,7 @@ export class UrdfSource {
             const named = this.#files.filter((uri) => splitHash(uri).hash).length
             const beside = this.#files.filter((uri) => !splitHash(uri).hash && this.#assetHashes.has(uri)).length
             meshLog(`${kind}: ${this.#files.length} files, ${named} hashed in their name, ${beside} in assetInfo, the rest cached under the ${kind}'s`)
-            this.state.update({ description, meshesWanted: meshUris(description).length, problem: null })
+            this.state.update({ description, meshesWanted: meshUris(description).length, problem: null, kind })
             this.#count()
             this.#loadCached(description)
         } catch (error) {

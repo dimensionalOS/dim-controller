@@ -119,11 +119,11 @@ class HardwareModelLayer {
         }
         this.#placedFor = { tf: tf.version, fixed: frame.fixedFrame, models: this.#models }
         const unplaced: string[] = []
-        for (const { kinematics, model, module } of this.#drawn.values()) {
-            const poses = modulePoses(kinematics, module.namespace, (name) => tf.lookup(name, frame.fixedFrame))
+        for (const { kinematics, model } of this.#drawn.values()) {
+            const poses = modulePoses(kinematics, (name) => tf.lookup(name, frame.fixedFrame))
             model.root.visible = !!poses
             if (!poses) {
-                unplaced.push(moduleFrame(module.namespace, kinematics.root))
+                unplaced.push(moduleFrame(kinematics.root))
                 continue
             }
             for (const [link, group] of model.links) {
