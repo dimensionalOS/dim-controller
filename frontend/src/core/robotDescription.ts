@@ -13,6 +13,9 @@ const originMatrix = (origin: Origin) =>
 
 export type DisplayMode = "visual" | "collision" | "both"
 
+/** A material's finish as the description states it (UsdPreviewSurface's roughness, metallic and ior). */
+type Finish = Pick<DescriptionGeometry, "roughness" | "metallic" | "ior">
+
 /** How much of a surface one tile of its texture covers. Concrete at a couple of metres a tile
  * reads as a slab; stretched whole over a room it is a smear. */
 const TEXTURE_TILE_METRES = 2
@@ -90,12 +93,18 @@ export function groupNames(description: RobotDescription): string[] {
 export class RobotModel {
     readonly root = new THREE.Group()
     readonly links = new Map<string, THREE.Group>()
-    readonly materials: THREE.MeshStandardMaterial[] = []
+    readonly materials: THREE.MeshPhysicalMaterial[] = []
 
     /** `splats`: splat files by URI (core/urdfSource.ts), drawn where a visual names one; none for ghosts */
     constructor(readonly kinematics: Kinematics, geometries: Map<string, THREE.BufferGeometry>, look: { color?: string; opacity?: number; collisionColor?: string } = {}, readonly splats?: Map<string, SplatAsset>, readonly textureFiles?: Map<string, THREE.Texture>) {
-        const material = (color: THREE.ColorRepresentation, alpha: number) => {
-            const made = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.1, transparent: alpha < 1, opacity: alpha, depthWrite: alpha >= 1 })
+        const material = (color: THREE.ColorRepresentation, alpha: number, finish: Finish = {}) => {
+            // the material's own finish where the description states one (a USD material does), else a dull plastic
+            const made = new THREE.MeshPhysicalMaterial({ color, roughness: finish.roughness ?? 0.55, metalness: finish.metallic ?? 0.1, transparent: alpha < 1, opacity: alpha, depthWrite: alpha >= 1 })
+            if (finish.ior !== undefined) {
+                made.ior = Math.max(1, finish.ior)
+                // an ior of 1 is no interface at all: no reflection at any angle, as Blender renders it
+                made.specularIntensity = finish.ior <= 1 ? 0 : 1
+            }
             this.materials.push(made)
             return made
         }
@@ -107,6 +116,8 @@ export class RobotModel {
                     return new THREE.BoxGeometry(...(geometry.size ?? [0.1, 0.1, 0.1]))
                 case "sphere":
                     return new THREE.SphereGeometry(geometry.radius ?? 0.05, 24, 16)
+                case "plane":
+                    return new THREE.PlaneGeometry(geometry.size?.[0] ?? 1, geometry.size?.[1] ?? 1)
                 case "cylinder": {
                     // URDF cylinders run along z; three's along y
                     const cylinder = new THREE.CylinderGeometry(geometry.radius ?? 0.05, geometry.radius ?? 0.05, geometry.length ?? 0.1, 24)
@@ -137,7 +148,7 @@ export class RobotModel {
 
     readonly #pending: { group: THREE.Group; kind: "visual" | "collision"; item: DescriptionGeometry }[] = []
     readonly #shapeOf: (geometry: DescriptionGeometry, geometries: Map<string, THREE.BufferGeometry>) => THREE.BufferGeometry | null
-    readonly #material: (color: THREE.ColorRepresentation, alpha: number) => THREE.MeshStandardMaterial
+    readonly #material: (color: THREE.ColorRepresentation, alpha: number, finish?: Finish) => THREE.MeshPhysicalMaterial
     readonly #look: { color?: string; opacity?: number; collisionColor?: string }
     #display: DisplayMode = "visual"
     #parts: ModelParts = { robot: true, groups: {}, meshes: true, staticMeshes: true, splats: true }
@@ -179,7 +190,13 @@ export class RobotModel {
             const color = kind === "collision"
                 ? this.#look.collisionColor ?? "#ff8a3d"
                 : this.#look.color ?? (item.color ? new THREE.Color(item.color[0], item.color[1], item.color[2]) : "#d9dde3")
-            const mesh = new THREE.Mesh(shape, this.#material(color, kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? 1)))
+            const made = this.#material(color, kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? 1), kind === "visual" ? item : {})
+            // a file of many parts colours each by its own material (a USD mesh layer does), with no colour over it
+            if (kind === "visual" && shape.attributes.color && !this.#look.color && !item.color) {
+                made.vertexColors = true
+                made.color.setRGB(1, 1, 1)
+            }
+            const mesh = new THREE.Mesh(shape, made)
             // A room drawn from a description has to take part in the lighting. Without these nothing
             // occludes anything: a desk's recessed panel comes out brighter than its own side,
             // because all that is left is which way a face points at the lights.

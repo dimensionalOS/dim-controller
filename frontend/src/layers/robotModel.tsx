@@ -90,7 +90,7 @@ class RobotModelLayer {
         this.root.add(this.#model.root)
         // A scene states how it is lit and how it wants to be shown; the viewer's own are guesses for when
         // nothing does.
-        this.context.viewer.setSceneLights?.(this.#kinematics.description.lights)
+        this.context.viewer.setSceneLights?.(this.#kinematics.description.lights, this.#source.textures)
         this.context.viewer.setSceneLook?.(this.#kinematics.description.look)
         this.#applyMeshStyle()
         this.#tfVersion = -1
