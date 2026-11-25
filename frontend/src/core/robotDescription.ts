@@ -113,6 +113,9 @@ export class RobotModel {
                     cylinder.rotateX(Math.PI / 2)
                     return cylinder
                 }
+                case "plane":
+                    // a size[0] by size[1] face in xy facing +z, which is how three lays out PlaneGeometry
+                    return new THREE.PlaneGeometry(geometry.size?.[0] ?? 1, geometry.size?.[1] ?? 1)
             }
         }
         this.#shapeOf = shapeOf
