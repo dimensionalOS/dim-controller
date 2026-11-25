@@ -29,6 +29,12 @@ function spanOf(item: DescriptionGeometry): [number, number] {
     const across = (item.radius ?? 0.5) * 2
     return [Math.abs(across * scale[0]), Math.abs((item.length ?? across) * scale[1])]
 }
+/** A UsdUVTexture's image on its material, for a top-level shape and a mesh layer alike: the material's colour is the texture's scale, which multiplies it as USD has it. */
+function hangTexture(material: THREE.MeshStandardMaterial, texture: THREE.Texture) {
+    material.map = texture
+    material.needsUpdate = true
+}
+
 /** What the model draws, each shown or not: the links in no group (the robot's own), each group's links (by name;
  * unset: shown), and across those, mesh files (those of moving links and of static ones, staticLinks, apart) and Gaussian
  * splat files. */
@@ -333,12 +339,7 @@ export class RobotModel {
                 tile.repeat.set(Math.max(1, span[0] / TEXTURE_TILE_METRES), Math.max(1, span[1] / TEXTURE_TILE_METRES))
                 for (const material of [mesh.userData.textured, mesh.material] as (THREE.MeshStandardMaterial | undefined)[]) {
                     if (material && "map" in material) {
-                        material.map = tile
-                        // displayColor is what to draw *instead of* the picture, for a reader that
-                        // cannot fetch it -- not a tint over it. three multiplies the two, so
-                        // leaving a slab's grey on top of its concrete renders the floor near black.
-                        material.color.setRGB(1, 1, 1)
-                        material.needsUpdate = true
+                        hangTexture(material, tile)
                     }
                 }
                 mesh.userData.textureHung = true
@@ -348,14 +349,13 @@ export class RobotModel {
         return hung
     }
 
-    /** A mesh layer's images on the materials naming them, laid by the layer's own uvs and multiplied by the texture's scale (the material's colour). */
+    /** A mesh layer's images on the materials naming them, laid by the layer's own uvs. */
     #hangLayerTextures(mesh: THREE.Mesh, materials: THREE.MeshStandardMaterial[]): boolean {
         let hung = false
         for (const material of materials) {
             const source = material.userData.textureUri ? this.textureFiles?.get(material.userData.textureUri) : undefined
             if (source && material.map !== source) {
-                material.map = source
-                material.needsUpdate = true
+                hangTexture(material, source)
                 hung = true
             }
         }

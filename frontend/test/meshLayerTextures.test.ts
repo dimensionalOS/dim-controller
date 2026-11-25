@@ -1,4 +1,4 @@
-// A USD mesh layer's textures (core/urdfSource.ts, core/robotDescription.ts): asked for on /render_file_request by the layer's path joined with the image's, decoded, cached, and hung on the layer's materials.
+// A USD scene's textures, top-level and in mesh layers (core/urdfSource.ts, core/robotDescription.ts): asked for on /render_file_request by the layer's path joined with the image's, decoded, cached, and hung on the layer's materials.
 import { assert, assertEquals } from "jsr:@std/assert@1"
 import { IDBFactory } from "npm:fake-indexeddb@6.0.0"
 import { Store } from "../src/core/store.ts"
@@ -8,7 +8,7 @@ import { decode } from "../src/core/lcm/lcm.ts"
 import { FILE_INFO, FILE_REQUEST, UrdfSource } from "../src/core/urdfSource.ts"
 import { installUsdParser, type UsdParser } from "../src/core/usd.ts"
 import { Kinematics, type RobotDescription, RobotModel } from "../src/core/robotDescription.ts"
-import type * as THREE from "three"
+import * as THREE from "three"
 
 const global = globalThis as { indexedDB?: IDBFactory }
 /** written by pxr (dimos-react's test/fixtures/textured.usdc): a quad reading ../textures/wood.png, and a red one */
@@ -116,4 +116,16 @@ Deno.test("a mesh layer's texture is asked for by the name dimos serves it under
         installUsdParser(previous)
         console.info = info
     }
+})
+
+Deno.test("a top-level shape's texture is multiplied by the UsdUVTexture's scale, as a mesh layer's is", () => {
+    // dimos-react's surfaceLook gives a textured shape the texture's scale as its colour
+    const description: RobotDescription = {
+        ...standIn.parseUsda(""),
+        links: [{ name: "room", visuals: [{ type: "box", origin, size: [1, 1, 1], color: [0.5, 0.25, 1, 1], texture: "t.png" }], collisions: [] }],
+    }
+    const model = new RobotModel(new Kinematics(description), new Map(), {}, undefined, new Map([["t.png", new THREE.Texture()]]))
+    const material = (model.links.get("room")!.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial
+    assert(material.map !== null, "hung")
+    assertEquals([material.color.r, material.color.g, material.color.b], [0.5, 0.25, 1])
 })
