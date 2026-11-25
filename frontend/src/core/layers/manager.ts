@@ -6,6 +6,7 @@ import { layerTypeFor } from "./registry.ts"
 import { persistentStore, Store } from "../store.ts"
 import { type Connection, parseKey, type Topic } from "../transport.ts"
 import { FILE_REQUEST, urdfSource } from "../urdfSource.ts"
+import { HARDWARE_TOPIC } from "../hardwareFiles.ts"
 import type * as THREE from "three"
 import type { TfTree } from "dimos-react/three"
 import type { TfHistory } from "../tfHistory.ts"
@@ -57,6 +58,8 @@ export class LayerManager {
         this.paused.subscribe(watchUrdf)
         watchUrdf()
         const modelTopic = parseKey(FILE_REQUEST)!
+        // every HardwareModule's USD is found from tf (core/hardwareFiles.ts), so one entry stands for them all
+        const hardwareTopic = parseKey(HARDWARE_TOPIC)!
         // The world is drawn from the USD description and from nothing else. There used to be a second
         // path here -- the sim's older scene_info/scene_data -- which describes the same room and the
         // same robots all over again, and drawing both put every wall, floor and robot on screen twice
@@ -64,7 +67,7 @@ export class LayerManager {
         // narrowed the window: a fresh page, or a sim restart, still drew the old path for as long as
         // the stage took to fetch, and the flicker came back. It is gone instead of conditional.
         const sync = () => {
-            const topics = [...connection.status.get().topics, modelTopic]
+            const topics = [...connection.status.get().topics, modelTopic, hardwareTopic]
             this.#sync(topics)
         }
         connection.status.subscribe(sync)
