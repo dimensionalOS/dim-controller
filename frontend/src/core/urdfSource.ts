@@ -21,7 +21,7 @@ import type * as THREE from "three"
 import { decode, encode } from "./lcm/lcm.ts"
 import { Store } from "./store.ts"
 import { type Connection, dimosKey, Priority, type Publisher } from "./transport.ts"
-import { decodeMeshFile, meshGeometry, meshUris, parseUrdf } from "dimos-react/three"
+import { decodeMeshFile, meshGeometry, meshTextures, meshUris, parseUrdf } from "dimos-react/three"
 import { cachedFile, meshLog, splitHash, storeFile } from "./meshCache.ts"
 import { loadSplats, type SplatAsset, splatFileType, StaleBuildError } from "./splats.ts"
 import { imageTexture, isImage } from "./imageTexture.ts"
@@ -96,6 +96,8 @@ export class UrdfSource {
     #failed = new Set<string>()
     /** URIs being decoded (a splat file decodes in a worker) */
     #decoding = new Set<string>()
+    /** a mesh layer's images whose cached copy is still being looked up (not asked for meanwhile) */
+    #lookingUp = new Set<string>()
     #timer: ReturnType<typeof setInterval> | null = null
     /** set once the cache has been looked at for this URDF's meshes (asking waits for that) */
     #cacheChecked = false
@@ -237,6 +239,7 @@ export class UrdfSource {
             this.#have.clear()
             this.#descriptionHash = ""
             this.#failed.clear()
+            this.#lookingUp.clear()
             this.#cacheChecked = false
             const ranks = fileRanks(description)
             this.#files = meshUris(description).sort((a, b) => ranks.get(a)! - ranks.get(b)!)
@@ -286,7 +289,7 @@ export class UrdfSource {
         // the description's name for it: the same URL, its ?hash= possibly newer than the description's (the file
         // changed since). A USD layer names the plain path, so there its name and the reply's are the same string.
         const reply = splitHash(file.uri)
-        const uri = meshUris(description).find((each) => each === file.uri || (reply.hash && splitHash(each).base === reply.base))
+        const uri = this.#files.find((each) => each === file.uri || (reply.hash && splitHash(each).base === reply.base))
         // another page's reply, or one already loaded
         if (!uri || this.#loaded(uri) || this.#decoding.has(uri)) {
             return
@@ -332,7 +335,9 @@ export class UrdfSource {
             } else if (isImage(uri)) {
                 this.textures.set(uri, await imageTexture(data, uri))
             } else {
-                this.geometries.set(uri, meshGeometry(uri, data))
+                const geometry = meshGeometry(uri, data)
+                this.geometries.set(uri, geometry)
+                this.#wantTextures(uri, meshTextures(geometry))
             }
             meshLog(`decoded ${uri.split("/").pop()?.split("?")[0]} in ${Math.round(performance.now() - started)} ms, ${this.#since()}`)
         } catch (error) {
@@ -344,6 +349,30 @@ export class UrdfSource {
             this.#count()
         }
         return true
+    }
+
+    /** A mesh layer's images, wanted at the layer's rank from now on: each from the cache when it holds this copy, else asked for by the name dimos serves it under. */
+    async #wantTextures(layer: string, textures: string[]) {
+        const description = this.state.get().description
+        const fresh = textures.filter((uri) => !this.#files.includes(uri))
+        if (!description || !fresh.length) {
+            return
+        }
+        for (const uri of fresh) {
+            this.#ranks.set(uri, this.#ranks.get(layer) ?? 0)
+            this.#lookingUp.add(uri)
+        }
+        this.#files = [...this.#files, ...fresh].sort((a, b) => this.#ranks.get(a)! - this.#ranks.get(b)!)
+        this.state.update({ meshesWanted: this.#files.length })
+        await Promise.all(fresh.map(async (uri) => {
+            const { base, hash } = this.#hashOf(uri)
+            const cached = await cachedFile(base)
+            this.#lookingUp.delete(uri)
+            if (this.state.get().description === description && cached && cached.hash === hash) {
+                await this.#load(uri, cached.data)
+            }
+        }))
+        this.#askForMeshes()
     }
 
     /** Looks every hashed file up in the cache at once, using each whose hash is the description's as soon as it's read
@@ -397,7 +426,7 @@ export class UrdfSource {
 
     #count() {
         const description = this.state.get().description
-        const loaded = description ? meshUris(description).filter(this.#loaded).length : 0
+        const loaded = description ? this.#files.filter(this.#loaded).length : 0
         this.state.update({ meshesLoaded: loaded, meshVersion: this.state.get().meshVersion + 1 })
         for (const [rank, name] of ["robot", "scene tiles", "splats"].entries()) {
             const files = this.#files.filter((uri) => this.#ranks.get(uri) === rank)
@@ -422,7 +451,7 @@ export class UrdfSource {
                 this.#asked.delete(uri)
             }
         }
-        const missing = this.#files.filter((uri) => !this.#loaded(uri) && !this.#decoding.has(uri) && !this.#failed.has(uri) && !this.#asked.has(uri))
+        const missing = this.#files.filter((uri) => !this.#loaded(uri) && !this.#decoding.has(uri) && !this.#failed.has(uri) && !this.#asked.has(uri) && !this.#lookingUp.has(uri))
         const requests = this.#publisher(this.#meshRequestKey ?? FILE_REQUEST)!
         for (const uri of missing.slice(0, Math.max(0, MESHES_IN_FLIGHT - this.#asked.size))) {
             const have = this.#have.get(uri)

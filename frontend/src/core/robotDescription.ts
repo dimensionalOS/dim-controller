@@ -2,7 +2,7 @@
 // description itself, its forward kinematics and IK are dimos-react's (dimos-react/three).
 import * as THREE from "three"
 import type { DescriptionGeometry, JointPositions, Origin, RobotDescription } from "dimos-react/three"
-import { Kinematics } from "dimos-react/three"
+import { Kinematics, meshLooks } from "dimos-react/three"
 import type { SplatAsset, SplatObject } from "./splats.ts"
 
 export { basePose, Kinematics, urdfPositions } from "dimos-react/three"
@@ -192,11 +192,20 @@ export class RobotModel {
                 : this.#look.color ?? (item.color ? new THREE.Color(item.color[0], item.color[1], item.color[2]) : "#d9dde3")
             const made = this.#material(color, kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? 1), kind === "visual" ? item : {})
             // a file of many parts colours each by its own material (a USD mesh layer does), with no colour over it
-            if (kind === "visual" && shape.attributes.color && !this.#look.color && !item.color) {
+            const own = kind === "visual" && !this.#look.color && !item.color
+            if (own && shape.attributes.color) {
                 made.vertexColors = true
                 made.color.setRGB(1, 1, 1)
             }
-            const mesh = new THREE.Mesh(shape, made)
+            // a USD mesh layer's groups each in their own material, its texture hung once that file is in
+            const looks = own ? meshLooks(shape) : []
+            const parts = looks.map((look) => {
+                const [red, green, blue, alpha] = look.color ?? [1, 1, 1, 1]
+                const part = this.#material(new THREE.Color(red, green, blue), opacity * alpha, look)
+                part.userData.textureUri = look.texture
+                return part
+            })
+            const mesh = new THREE.Mesh(shape, parts.length ? parts : made)
             // A room drawn from a description has to take part in the lighting. Without these nothing
             // occludes anything: a desk's recessed panel comes out brighter than its own side,
             // because all that is left is which way a face points at the lights.
@@ -208,6 +217,7 @@ export class RobotModel {
             mesh.userData.textureUri = item.texture
             mesh.userData.textureSpan = spanOf(item)
             mesh.userData.textured = mesh.material
+            mesh.userData.textureHung = parts.length > 0 && parts.every((part) => !part.userData.textureUri)
             mesh.matrixAutoUpdate = false
             mesh.matrix.copy(originMatrix(item.origin))
             if (item.scale) {
@@ -216,7 +226,7 @@ export class RobotModel {
             group.add(mesh)
             added = true
         }
-        this.#hangTextures()
+        added = this.#hangTextures() || added
         if (added) {
             this.#applyVisibility()
             this.#applyTextures()
@@ -277,7 +287,7 @@ export class RobotModel {
         this.root.traverse((object) => {
             const mesh = object as THREE.Mesh
             if (mesh.isMesh && mesh.userData.kind === "visual") {
-                for (const material of [mesh.userData.textured, mesh.userData.plain] as (THREE.MeshStandardMaterial | undefined)[]) {
+                for (const material of [mesh.userData.textured, mesh.userData.plain].flat() as (THREE.MeshStandardMaterial | undefined)[]) {
                     if (material) {
                         material.color.set(color)
                         material.opacity = opacity
@@ -298,14 +308,18 @@ export class RobotModel {
      * across eighteen metres of floor is a blur, so it is laid at a fixed size in metres and the
      * shape's own extent says how many times that is.
      */
-    #hangTextures() {
+    #hangTextures(): boolean {
         if (!this.textureFiles?.size) {
-            return
+            return false
         }
+        let hung = false
         for (const link of this.links.values()) {
             for (const object of link.children) {
                 const mesh = object as THREE.Mesh
                 const uri = mesh.userData.textureUri as string | undefined
+                if (mesh.isMesh && Array.isArray(mesh.userData.textured) && !mesh.userData.textureHung) {
+                    hung = this.#hangLayerTextures(mesh, mesh.userData.textured) || hung
+                }
                 if (!mesh.isMesh || !uri || mesh.userData.textureHung) {
                     continue
                 }
@@ -328,8 +342,25 @@ export class RobotModel {
                     }
                 }
                 mesh.userData.textureHung = true
+                hung = true
             }
         }
+        return hung
+    }
+
+    /** A mesh layer's images on the materials naming them, laid by the layer's own uvs and multiplied by the texture's scale (the material's colour). */
+    #hangLayerTextures(mesh: THREE.Mesh, materials: THREE.MeshStandardMaterial[]): boolean {
+        let hung = false
+        for (const material of materials) {
+            const source = material.userData.textureUri ? this.textureFiles?.get(material.userData.textureUri) : undefined
+            if (source && material.map !== source) {
+                material.map = source
+                material.needsUpdate = true
+                hung = true
+            }
+        }
+        mesh.userData.textureHung = materials.every((material) => !material.userData.textureUri || material.map)
+        return hung
     }
 
     #applyTextures() {
@@ -338,9 +369,9 @@ export class RobotModel {
             if (!mesh.isMesh || mesh.userData.kind !== "visual" || !mesh.userData.textured) {
                 return
             }
-            const textured = mesh.userData.textured as THREE.MeshStandardMaterial
+            const textured = mesh.userData.textured as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
             if (!this.#textures && !mesh.userData.plain) {
-                const plain = this.#material(this.#tint?.color ?? "#9aa0a6", textured.opacity)
+                const plain = this.#material(this.#tint?.color ?? "#9aa0a6", [textured].flat()[0].opacity)
                 plain.flatShading = true
                 mesh.userData.plain = plain
             }
