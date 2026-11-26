@@ -138,9 +138,11 @@ Deno.test("a second path between two frames is reported, and the tree takes the 
     const tree = dog()
     tree.set("world", "go2", [5, 5, 0], none, false)
     const snapshot = tree.snapshot()
-    assertEquals(snapshot.offTree.length, 1)
-    assert(snapshot.problems.cycle.length > 0)
+    // go2/base_link is two steps from the world both ways (odom's estimate, the USD's edge under go2): the USD's is taken
+    assertEquals(snapshot.offTree.map((edge) => `${edge.parent}->${edge.child}`), ["odom->go2/base_link"])
+    assertEquals(snapshot.problems.cycle, ["go2/base_link", "odom"])
     assertEquals(tree.parentOf("go2"), "world")
+    assertEquals(tree.parentOf("go2/base_link"), "go2")
 })
 
 Deno.test("lookupAt follows the graph and interpolates each edge, walked either way", () => {

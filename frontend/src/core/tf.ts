@@ -306,19 +306,20 @@ export class TfGraph extends TfTree {
         const nodes = new Map<string, TreeNode>([[root, { parent: null, edge: null, flipped: false }]])
         let level = [root]
         while (level.length) {
-            const next: string[] = []
+            // each frame one step further takes the best-ranked edge any frame of this level offers it
+            const offers = new Map<string, TreeNode>()
             for (const frame of level) {
-                const edges = [...this.#adjacent.get(frame) ?? []].sort((a, b) => this.#rank(a) - this.#rank(b) || pairKey(a.parent, a.child).localeCompare(pairKey(b.parent, b.child)))
-                for (const edge of edges) {
+                for (const edge of this.#adjacent.get(frame) ?? []) {
                     const flipped = edge.child === frame
                     const other = flipped ? edge.parent : edge.child
-                    if (!nodes.has(other)) {
-                        nodes.set(other, { parent: frame, edge, flipped })
-                        next.push(other)
+                    const offered = offers.get(other)?.edge
+                    if (!nodes.has(other) && (!offered || this.#rank(edge) < this.#rank(offered) || (this.#rank(edge) === this.#rank(offered) && pairKey(edge.parent, edge.child) < pairKey(offered.parent, offered.child)))) {
+                        offers.set(other, { parent: frame, edge, flipped })
                     }
                 }
             }
-            level = next
+            offers.forEach((node, frame) => nodes.set(frame, node))
+            level = [...offers.keys()]
         }
         this.#trees.set(root, nodes)
         return nodes
