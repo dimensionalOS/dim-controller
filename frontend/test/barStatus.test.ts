@@ -47,10 +47,10 @@ Deno.test("driving stopped by the link watch reads Disengaged, with what to do",
 })
 
 Deno.test("the gamepad chip: none without a pad; ready, waiting for rest, or stopped until A", () => {
-    assertEquals(gamepadChip({ connected: false, id: "", ready: false, stopped: false }), null)
-    assertEquals(gamepadChip({ connected: true, id: "x", ready: true, stopped: false })?.tone, "ok")
-    assertEquals(gamepadChip({ connected: true, id: "x", ready: false, stopped: false })?.text, "center sticks")
-    assert(/A/.test(gamepadChip({ connected: true, id: "x", ready: false, stopped: true })!.detail))
+    assertEquals(gamepadChip({ connected: false, id: "", ready: false, stopped: false, sitHold: 0 }), null)
+    assertEquals(gamepadChip({ connected: true, id: "x", ready: true, stopped: false, sitHold: 0 })?.tone, "ok")
+    assertEquals(gamepadChip({ connected: true, id: "x", ready: false, stopped: false, sitHold: 0 })?.text, "center sticks")
+    assert(/A/.test(gamepadChip({ connected: true, id: "x", ready: false, stopped: true, sitHold: 0 })!.detail))
 })
 
 Deno.test("the link chip's average starts at the first sample, eases toward new ones, and clears with no data", () => {

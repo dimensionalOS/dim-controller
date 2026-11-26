@@ -38,7 +38,7 @@ Deno.test("held: a stop goes out, input is ignored and nothing moves; after resu
     const puts: { linear: { x: number }; angular: { z: number } }[] = []
     const client = {
         state: "connected",
-        publisher: () => ({ state: "open", put: (bytes: Uint8Array) => puts.push(decode("geometry_msgs.Twist", bytes)), setDeadman: () => Promise.resolve(), clearDeadman: () => Promise.resolve(), close() {} }),
+        publisher: () => ({ state: "open", put: (bytes: Uint8Array) => puts.push(decode("geometry_msgs.Twist", bytes) as (typeof puts)[number]), setDeadman: () => Promise.resolve(), clearDeadman: () => Promise.resolve(), close() {} }),
     }
     const drive = new Drive({ client, command() {} } as unknown as Connection, go2)
     drive.setRunning({ bp: [{ streams: [{ name: "cmd_vel", type: "dimos.msgs.geometry_msgs.Twist.Twist", direction: "in" }] }] })

@@ -3,7 +3,7 @@
     "tasks": {
         "dev": "deno run -A npm:vite",
         "build": "deno task typecheck && deno run -A npm:vite build",
-        "typecheck": "deno check src/",
+        "typecheck": "deno check src/ test/",
         "test": "deno test -A --no-check test/"
     },
     "imports": {
@@ -40,6 +40,7 @@
             "DOM",
             "DOM.Iterable",
             "deno.ns"
-        ]
+        ],
+        "types": ["./src/libs.d.ts"]
     }
 }

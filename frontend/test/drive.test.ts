@@ -6,8 +6,10 @@ import go2 from "../src/profile/dog.ts"
 import drone from "../src/profile/drone.ts"
 import type { Connection } from "../src/core/transport.ts"
 
+type Twist = { linear: { x: number; y: number; z: number }; angular: { z: number } }
+
 function fakeBridge() {
-    const puts: { key: string; twist: { linear: { x: number; y: number; z: number }; angular: { z: number } } }[] = []
+    const puts: { key: string; twist: Twist }[] = []
     const deadmen: string[] = []
     const cleared: string[] = []
     const opened: string[] = []
@@ -17,7 +19,7 @@ function fakeBridge() {
             opened.push(key)
             return {
                 state: "open",
-                put: (bytes: Uint8Array) => puts.push({ key, twist: decode("geometry_msgs.Twist", bytes) }),
+                put: (bytes: Uint8Array) => puts.push({ key, twist: decode("geometry_msgs.Twist", bytes) as Twist }),
                 setDeadman: () => (deadmen.push(key), Promise.resolve()),
                 clearDeadman: () => (cleared.push(key), Promise.resolve()),
                 close() {},

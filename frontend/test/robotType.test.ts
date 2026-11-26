@@ -4,7 +4,7 @@ import { assertEquals } from "jsr:@std/assert@1"
 import { chosenType, resolveType, robotsAnswer, typeFromName } from "../src/core/robotType.ts"
 import go2 from "./fixtures/blueprint_unitree-go2.json" with { type: "json" }
 
-const go2Modules = (go2 as { modules: never[] }).modules
+const go2Modules = go2.modules
 const armModules = [
     { name: "ControlCoordinator", streams: [{ name: "joint_state", type: "dimos.msgs.sensor_msgs.JointState.JointState", direction: "out" }, { name: "joint_command", type: "dimos.msgs.sensor_msgs.JointState.JointState", direction: "in" }] },
 ]

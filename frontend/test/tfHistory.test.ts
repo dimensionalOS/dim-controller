@@ -50,8 +50,8 @@ Deno.test("a stamp outside what's kept gets each edge's newest sample, and an un
     const { history, set } = feed()
     set("odom", "base_link", [1, 0, 0], none, 1000)
     set("odom", "base_link", [3, 0, 0], none, 1100)
-    assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 5000)).x, 3, "newer than every sample")
-    assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 10)).x, 3, "older than every sample")
+    assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 5000)).x, 3, undefined, "newer than every sample")
+    assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 10)).x, 3, undefined, "older than every sample")
     assertEquals(history.lookupAt("nowhere", "odom", 1000), null)
     // no tf for world or map: the tree has them stand in for each other
     assert(history.lookupAt("map", "world", 1000))
