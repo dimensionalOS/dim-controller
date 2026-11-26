@@ -107,7 +107,32 @@ export class HardwareSource {
     /** module files already said in the console to be unservable */
     #saidUnservable = new Set<string>()
 
+    /**
+     * This app's backend (server/src/hardware.rs): every module file it heard on the bus or read from a recording, by
+     * sha256. Asked after IndexedDB and before the module, so a replay (no module running) still draws the hardware.
+     * Tests put a fake in its place.
+     */
+    backend: (path: string) => Promise<Response> = async (path) => await fetch(new URL(path, globalThis.location?.href).href)
+    /** the backend's modules (namespace → uri → sha256), asked once per acquire */
+    #backendModules: Promise<Record<string, Record<string, string>>> | null = null
+
     constructor(readonly connection: Connection, readonly tf: TfTree) {}
+
+    /** a file's bytes from the backend's cache, null when it hasn't them (or there's no backend) */
+    async #fromBackend(sha256: string): Promise<Uint8Array | null> {
+        try {
+            const response = await this.backend(`api/hardware/files/${encodeURIComponent(sha256)}`)
+            return response.ok ? new Uint8Array(await response.arrayBuffer()) : null
+        } catch {
+            return null
+        }
+    }
+
+    /** the hash the backend knows `namespace`'s hardware.usda by, or null */
+    async #backendUsd(namespace: string): Promise<string | null> {
+        this.#backendModules ??= this.backend("api/hardware").then((response) => response.ok ? response.json() : {}).then((answer: { modules?: Record<string, Record<string, string>> }) => answer?.modules ?? {}).catch(() => ({}))
+        return (await this.#backendModules)[namespace]?.[HARDWARE_USD] ?? null
+    }
 
     /** Starts listening (first user); the returned function lets go (the last one stops it, keeping what's loaded). */
     acquire(): () => void {
@@ -148,6 +173,7 @@ export class HardwareSource {
             }
             released = true
             if (--this.#users === 0) {
+                this.#backendModules = null
                 this.#stops.splice(0).forEach((stop) => stop())
                 this.#publishers.forEach((publisher) => publisher.close())
                 this.#publishers.clear()
@@ -194,6 +220,11 @@ export class HardwareSource {
         const kept = known && await cachedBytes(known) ? known : undefined
         if (this.#users && !this.state.get().modules.has(namespace)) {
             this.#request(namespace, HARDWARE_USD, kept)
+        }
+        // the backend may hold it (heard earlier, or read from a recording): drawn from there if no module answers first
+        const held = kept ? null : await this.#backendUsd(namespace)
+        if (held && this.#users && !this.state.get().modules.has(namespace)) {
+            this.#onUsd(namespace, { ts: 0, uri: HARDWARE_USD, sha256: held })
         }
     }
 
@@ -253,7 +284,7 @@ export class HardwareSource {
         this.#setModule(blank(namespace, sha256))
         const current = () => this.state.get().modules.get(namespace)?.sha256 === sha256 && !this.state.get().modules.get(namespace)?.description
         if (!info.content) {
-            const kept = await cachedBytes(sha256!)
+            const kept = await cachedBytes(sha256!) ?? await this.#fromBackend(sha256!)
             if (current()) {
                 if (kept) {
                     this.#useUsd(namespace, sha256, kept)
@@ -315,7 +346,7 @@ export class HardwareSource {
             return
         }
         this.#waiting.set(sha256, new Set([name]))
-        const kept = await cachedBytes(sha256)
+        const kept = await cachedBytes(sha256) ?? await this.#fromBackend(sha256)
         if (kept) {
             this.#deliver(module.namespace, uri, sha256, kept)
         } else if (this.#users) {

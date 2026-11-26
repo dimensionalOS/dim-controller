@@ -353,6 +353,32 @@ Deno.test("a mesh layer's image is fetched by the module, named against the laye
     })
 })
 
+Deno.test("a replay (no module answers): the hardware comes from the backend's cache, which a recording filled", async () => {
+    await withCache(new IDBFactory(), async () => {
+        const { connection, requests } = await bus({})
+        const tf = robotTf()
+        const source = new HardwareSource(connection, tf)
+        const DOG_HASH = await sha256(DOG)
+        const held = new Map([[DOG_HASH, DOG], [MESH_HASH, MESH]])
+        const asked: string[] = []
+        source.backend = (path) => {
+            asked.push(path)
+            if (path === "api/hardware") {
+                return Promise.resolve(Response.json({ modules: { go2: { [HARDWARE_USD]: DOG_HASH, [MESH_NAME]: MESH_HASH } } }))
+            }
+            const bytes = held.get(decodeURIComponent(path.replace("api/hardware/files/", "")))
+            return Promise.resolve(bytes ? new Response(bytes as unknown as BodyInit) : new Response("{}", { status: 404 }))
+        }
+        const release = source.acquire()
+        await until(() => loaded(source, "go2") === 1)
+        assertEquals(loaded(source, "go2"), 1, "the dog drawn from the backend's copies")
+        assertEquals(source.state.get().modules.has("go2/lidar"), false, "the backend never had the lidar")
+        assertEquals(asked.filter((path) => path === "api/hardware").length, 1, "the backend's list asked once")
+        assert(usdRequests(requests).length >= 1, "the modules were asked first, as always")
+        release()
+    })
+})
+
 Deno.test("a module's links placed at their tf frames, its root by tf", () => {
     const tf = robotTf()
     const kinematicsOf = (root: string) => new Kinematics({ name: "arm", base_link: root, base_frame: root, base_pose: { xyz: [0, 0, 0], quat: [0, 0, 0, 1] }, joint_names: [], joints: [], links: [{ name: root, visuals: [], collisions: [] }] })
