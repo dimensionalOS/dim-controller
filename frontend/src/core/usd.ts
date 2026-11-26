@@ -112,7 +112,8 @@ export function usdPrimPaths(text: string): string[] {
  * The description with its links named by their prim paths rather than their displayName: a HardwareModule's tf frame
  * IS the prim path (dimos/core/hardware_module.py), and a displayName is only a label. dimos-react's parser names a
  * link by its displayName (UsdManager's older dialect, where it held the tf name); this renames each link, and the
- * joints and base that name it, to its path. A name two prims share is left as it is (it can't be told apart).
+ * joints and base that name it, to its path. A name two prims share is the outer one when it holds the other (a link and
+ * its own same-named mesh), else left as it is (it can't be told apart).
  */
 export function framesFromPrimPaths(description: RobotDescription, text: string): RobotDescription {
     if (!parsePrims) {
@@ -124,8 +125,10 @@ export function framesFromPrimPaths(description: RobotDescription, text: string)
         pathsByName.set(name, (pathsByName.get(name) ?? new Set()).add(path))
     })
     const rename = (name: string) => {
-        const paths = pathsByName.get(name)
-        return paths?.size === 1 ? [...paths][0] : name
+        const paths = [...pathsByName.get(name) ?? []]
+        // a link's mesh named as its link (`…/pelvis/pelvis`) is under it: the outermost prim holding all the others is the link
+        const outer = paths.find((path) => paths.every((other) => other === path || other.startsWith(`${path}/`)))
+        return outer ?? name
     }
     return {
         ...description,
