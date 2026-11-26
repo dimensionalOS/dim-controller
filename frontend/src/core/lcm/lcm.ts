@@ -2,6 +2,7 @@
 // Frames pass through the robot namespace (core/namespace.ts): `robot1/base_link` decodes as base_link, and back on encode.
 import { decodeLcm, encodeLcm, headerFrameId as rawHeaderFrameId } from "dimos-react"
 import { prefixFrames, stripFrame, stripFrames } from "../namespace.ts"
+import "./worldMsgs.ts"
 export { lcmFingerprint as fingerprint, lcmSchemas as schemas } from "dimos-react"
 
 export const decode: typeof decodeLcm = (...args: Parameters<typeof decodeLcm>) => stripFrames(decodeLcm(...args))
