@@ -13,6 +13,7 @@ mod desktop;
 mod dimos_app;
 mod drive;
 mod frontend;
+mod hardware;
 mod image;
 mod layout;
 mod logs;
@@ -26,7 +27,9 @@ mod recorder;
 mod recordings;
 mod routes;
 mod settings;
+mod sim;
 mod snapshots;
+mod tf_graph;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -153,7 +156,17 @@ async fn main() -> Result<()> {
         record_dir,
         dimos_app::field(|app| app.zenoh_connect.as_ref()).unwrap_or_default(),
         settings.clone(),
+        dimos_app::data_dir().join("hardware_cache"),
     ));
+    // hardware files and tf_static are kept from the start, for the recordings made later
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = state.listen().await {
+                eprintln!("controller: not listening for hardware files and tf_static: {error}");
+            }
+        });
+    }
     let annotations: Arc<annotations::Annotations> = Arc::default();
     let app_info = dimos_app::get();
     let relay = app_info.and_then(|app| Some((app.desktop_url.clone()?, app.name.clone()?)));

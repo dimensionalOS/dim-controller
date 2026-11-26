@@ -989,6 +989,49 @@ provides:
                                         minItems: 2
                                         type: array
                                 type: object
+        /api/hardware:
+            get:
+                description: >-
+                    Every dimos HardwareModule's files heard on the bus (hardware.usda and the meshes and images it
+                    names), kept here by sha256 for recordings and replays. Returns {modules {namespace: {uri:
+                    sha256}}, dir}.
+                x-when: you need to know which HardwareModule files this machine holds
+        '/api/hardware/files/{sha256}':
+            get:
+                summary: One cached hardware file. Returns its bytes (application/octet-stream); 404 if it isn't here.
+                x-when: you need a HardwareModule's file without the module running
+                parameters:
+                    -
+                        name: sha256
+                        in: path
+                        required: true
+                        schema:
+                            type: string
+                        description: 'sha256:<64 hex>, as GET api/hardware lists it'
+        /api/hardware/load:
+            post:
+                description: >-
+                    Read a recording's HardwareModule files (its hardware_file_response channels) into the cache.
+                    Returns {loaded} (how many files); 404 if the file can't be read.
+                x-when: you are replaying a recording and want its hardware drawn
+                requestBody:
+                    content:
+                        application/json:
+                            schema:
+                                properties:
+                                    name:
+                                        description: 'the recording''s file name, as GET api/recorder lists it under files'
+                                        type: string
+                                required:
+                                    - name
+                                type: object
+        /api/sim/entities:
+            get:
+                description: >-
+                    Each entity of the running sim (dimos sim2's MujocoSim) by id, from its snapshot(): the names
+                    world_observations announces once at the start. Returns {entities {id: path}}; 503 without a
+                    running sim.
+                x-when: you need the names of a simulated world's entities
 nix:
     cache:
         aarch64-linux:

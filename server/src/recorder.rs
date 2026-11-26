@@ -24,6 +24,9 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::asks::{self, Asks};
+use crate::hardware::{self, HardwareCache, FILE_INFO_TYPE};
+use crate::msgs::TF_TYPE;
+use crate::tf_graph::{encode_tf, Edge, TfGraph};
 use crate::image::ImageFormat;
 use crate::logs::LogTailer;
 use crate::record::{self, Compression, Recorder};
@@ -212,6 +215,44 @@ pub struct State {
     session: AsyncMutex<Option<zenoh::Session>>,
     active: AsyncMutex<Option<Active>>,
     meter: AsyncMutex<Option<Meter>>,
+    /// every HardwareModule's files heard on the bus, by sha256 (hardware.rs)
+    pub hardware: Arc<HardwareCache>,
+    /// tf as a graph: tf_static always (it's sent once, at a module's start), tf while recording (tf_graph.rs)
+    pub tf: Arc<Mutex<TfGraph>>,
+    /// while recording, a module's hardware.usda arriving has its missing files asked for
+    asking_hardware: Arc<std::sync::atomic::AtomicBool>,
+    /// the always-on listeners (hardware_file_response, tf_static), once started
+    listeners: AsyncMutex<Vec<zenoh::pubsub::Subscriber<()>>>,
+}
+
+/// tf_static on any namespace (zenoh's `**` also matches none: the top level's)
+const TF_STATIC: &str = "dimos/**/tf_static/tf2_msgs.TFMessage";
+
+/// A tf tree topic (its last part tf or tf_static), as the frontend's tfFeed.ts takes them.
+fn is_tree_topic(topic: &str) -> bool {
+    matches!(topic.rsplit('/').next(), Some("tf" | "tf_static"))
+}
+
+/// A recorded tf message: as published on `<topic>_raw`, and on `<topic>` as the rooted forest has its edges (one parent
+/// per frame, for a reader that wants a tree). Undecodable: as it came, on `<topic>`.
+fn record_tf(recorder: &Recorder, tf: &Mutex<TfGraph>, topic: &str, payload: &[u8]) {
+    let Ok(decoded) = crate::msgs::decode_tf(payload) else {
+        recorder.offer(topic, Some(TF_TYPE), payload);
+        return;
+    };
+    let is_static = topic.ends_with("tf_static");
+    let edges: Vec<Edge> = decoded.iter().map(|edge| Edge::from_tf(edge, is_static)).collect();
+    let rerooted = {
+        let mut tf = tf.lock().unwrap();
+        for edge in &edges {
+            tf.set(edge.clone());
+        }
+        tf.reroot(&edges)
+    };
+    recorder.offer(&format!("{topic}_raw"), Some(TF_TYPE), payload);
+    if !rerooted.is_empty() {
+        recorder.offer(topic, Some(TF_TYPE), &encode_tf(&rerooted));
+    }
 }
 
 /// The keys plus the answer streams their announcements bring (a recorded /robot_description records /file_info too),
@@ -249,10 +290,11 @@ impl State {
     /// With settings of its own that aren't saved (tests); the app uses `with_settings`.
     /// The tests': an endpoint given is the only link (no loopback scouting, so a dimos running here stays out of them).
     pub fn new(record_dir: PathBuf, zenoh_connect: String) -> Self {
-        Self { scout_loopback: false, ..Self::with_settings(record_dir, zenoh_connect, Arc::new(Store::load(None))) }
+        let hardware_dir = record_dir.join("hardware_cache");
+        Self { scout_loopback: false, ..Self::with_settings(record_dir, zenoh_connect, Arc::new(Store::load(None)), hardware_dir) }
     }
 
-    pub fn with_settings(record_dir: PathBuf, zenoh_connect: String, settings: Arc<Store>) -> Self {
+    pub fn with_settings(record_dir: PathBuf, zenoh_connect: String, settings: Arc<Store>, hardware_dir: PathBuf) -> Self {
         State {
             record_dir,
             settings,
@@ -261,7 +303,81 @@ impl State {
             session: AsyncMutex::new(None),
             active: AsyncMutex::new(None),
             meter: AsyncMutex::new(None),
+            hardware: Arc::new(HardwareCache::new(hardware_dir)),
+            tf: Arc::default(),
+            asking_hardware: Arc::default(),
+            listeners: AsyncMutex::new(Vec::new()),
         }
+    }
+
+    /// Listens for what a recording needs from before it started (once; later calls do nothing): every
+    /// hardware_file_response, into the cache, and tf_static, into the tf graph. Both are quiet unless someone asks or a
+    /// module starts, so this costs nothing while idle.
+    pub async fn listen(&self) -> anyhow::Result<()> {
+        let mut listeners = self.listeners.lock().await;
+        if !listeners.is_empty() {
+            return Ok(());
+        }
+        let session = self.session().await?;
+        let (cache, asking, asker) = (self.hardware.clone(), self.asking_hardware.clone(), session.clone());
+        let responses = session
+            .declare_subscriber(hardware::RESPONSES)
+            .callback(move |sample| {
+                let Some((namespace, info)) = cache.heard(sample.key_expr().as_str(), &sample.payload().to_bytes()) else {
+                    return;
+                };
+                // a module's USD while recording: what it names that isn't here is asked for, so the file holds it
+                if info.uri == hardware::HARDWARE_USD && info.content.is_some() && asking.load(Ordering::Relaxed) {
+                    ask_hardware(&asker, &namespace, cache.missing(&namespace));
+                }
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("subscribe {}: {error}", hardware::RESPONSES))?;
+        let tf = self.tf.clone();
+        let statics = session
+            .declare_subscriber(TF_STATIC)
+            .callback(move |sample| {
+                if let Ok(edges) = crate::msgs::decode_tf(&sample.payload().to_bytes()) {
+                    let mut tf = tf.lock().unwrap();
+                    for edge in &edges {
+                        tf.set(Edge::from_tf(edge, true));
+                    }
+                }
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("subscribe {TF_STATIC}: {error}"))?;
+        listeners.extend([responses, statics]);
+        Ok(())
+    }
+
+    /// What a recording holds from before its start: the last static tf (re-rooted on /tf_static, as published on
+    /// /tf_static_raw), and each known module's hardware.usda and files from the cache. What the cache lacks is asked
+    /// for (each module's missing files; hardware.usda of every namespace tf's frames could be a module in that hasn't
+    /// answered), and the answers are recorded as they come.
+    async fn write_known(&self, recorder: &Recorder) -> anyhow::Result<()> {
+        let (statics, rerooted, frames) = {
+            let mut tf = self.tf.lock().unwrap();
+            let statics = tf.static_edges();
+            let rerooted = tf.reroot(&statics);
+            (statics, rerooted, tf.frames())
+        };
+        if !statics.is_empty() {
+            recorder.offer("/tf_static_raw", Some(TF_TYPE), &encode_tf(&statics));
+            recorder.offer("/tf_static", Some(TF_TYPE), &encode_tf(&rerooted));
+        }
+        let session = self.session().await?;
+        for (namespace, module) in self.hardware.modules() {
+            for uri in module.files.keys() {
+                if let Some(answer) = self.hardware.response(&namespace, uri) {
+                    recorder.offer(&hardware::response_topic(&namespace), Some(FILE_INFO_TYPE), &answer);
+                }
+            }
+            ask_hardware(&session, &namespace, self.hardware.missing(&namespace));
+        }
+        for namespace in self.hardware.unknown_namespaces(&frames) {
+            ask_hardware(&session, &namespace, vec![hardware::HARDWARE_USD.to_string()]);
+        }
+        Ok(())
     }
 
     pub fn options(&self) -> Options {
@@ -333,6 +449,7 @@ impl State {
         let session = self.session().await?;
         let asking = (wildcard || Asks::announces(key)).then(|| asks.clone());
         let store = self.settings.clone();
+        let tf = self.tf.clone();
         let throttles: Mutex<HashMap<String, Arc<Throttle>>> = Mutex::default();
         let subscriber = session
             .declare_subscriber(key.to_string())
@@ -358,7 +475,11 @@ impl State {
                 drop(seen_keys);
                 let payload = sample.payload().to_bytes();
                 asks.heard(sample_key, &payload);
-                recorder.offer(topic, Some(msg_type), &payload)
+                if msg_type == TF_TYPE && is_tree_topic(topic) {
+                    record_tf(&recorder, &tf, topic, &payload);
+                } else {
+                    recorder.offer(topic, Some(msg_type), &payload)
+                }
             })
             .await
             .map_err(|error| anyhow::anyhow!("subscribe {key}: {error}"))?;
@@ -400,6 +521,13 @@ impl State {
             asks: asks.clone(),
         };
         let mut keys = keys.map_or_else(|| vec![BUS.to_string()], with_answers);
+        // a recording of anything holds the hardware too: what's cached, and the answers the start asks for
+        let hardware_too = !keys.is_empty();
+        if hardware_too {
+            // (a no-op once they listen)
+            self.listen().await?;
+            keys.push(hardware::RESPONSES.to_string());
+        }
         // (a start naming no keys records nothing, named locations included)
         let named_locations = !keys.is_empty() && !unticked(&self.settings, NAMED_LOCATIONS_KEY);
         if named_locations {
@@ -418,6 +546,10 @@ impl State {
         }
         if named_locations {
             let _ = self.session().await?.put(NAMED_LOCATIONS_REQUEST_KEY, asks::encode_string("")).await;
+        }
+        if hardware_too {
+            self.asking_hardware.store(true, Ordering::Relaxed);
+            self.write_known(&recorder).await?;
         }
         let status = recorder.status();
         *active = Some(started);
@@ -465,6 +597,7 @@ impl State {
         let Some(active) = self.active.lock().await.take() else {
             anyhow::bail!("not recording");
         };
+        self.asking_hardware.store(false, Ordering::Relaxed);
         active.asks.stop();
         // undeclare first so nothing is offered after the writer closes
         for subscriber in active.subscribers {
@@ -647,6 +780,17 @@ impl State {
             }
         });
         Ok(meter)
+    }
+}
+
+/// Asks a module for files it has and this doesn't (plain requests: no hash, so each comes back whole).
+fn ask_hardware(session: &zenoh::Session, namespace: &str, files: Vec<String>) {
+    for uri in files {
+        let request = hardware::encode_file_info(&hardware::FileInfo { ts: record::now_nanos() as f64 / 1e9, uri, ..Default::default() });
+        let (session, key) = (session.clone(), hardware::request_key(namespace));
+        tokio::spawn(async move {
+            let _ = session.put(key, request).await;
+        });
     }
 }
 
@@ -946,6 +1090,38 @@ pub async fn download_file(
     }
 }
 
+/// Every HardwareModule file the cache holds: namespace → uri → sha256, and the cache's folder.
+pub async fn hardware(Extract(state): Extract<Arc<State>>) -> Response {
+    let modules: BTreeMap<String, BTreeMap<String, String>> = state.hardware.modules().into_iter().map(|(namespace, module)| (namespace, module.files)).collect();
+    Json(json!({ "modules": modules, "dir": state.hardware.dir().display().to_string() })).into_response()
+}
+
+/// One cached hardware file's bytes, by its sha256.
+pub async fn hardware_file(Extract(state): Extract<Arc<State>>, Path(sha256): Path<String>) -> Response {
+    match state.hardware.bytes(&sha256) {
+        Some(bytes) => ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response(),
+        None => error(StatusCode::NOT_FOUND, format!("no hardware file {sha256} here")),
+    }
+}
+
+/// A recording's hardware files (its hardware_file_response channels) into the cache, for replaying it.
+pub async fn load_hardware(Extract(state): Extract<Arc<State>>, body: axum::body::Bytes) -> Response {
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let Some(name) = body["name"].as_str() else {
+        return error(StatusCode::BAD_REQUEST, "name: the recording's file name");
+    };
+    let path = match record::resolve(&state.directory(), name) {
+        Ok(path) => path,
+        Err(problem) => return error(StatusCode::BAD_REQUEST, problem),
+    };
+    let cache = state.hardware.clone();
+    match tokio::task::spawn_blocking(move || hardware::load_mcap(&cache, &path)).await {
+        Ok(Ok(loaded)) => Json(json!({ "loaded": loaded })).into_response(),
+        Ok(Err(problem)) => error(StatusCode::NOT_FOUND, problem),
+        Err(problem) => error(StatusCode::INTERNAL_SERVER_ERROR, problem),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,6 +1282,90 @@ mod tests {
         let bytes = std::fs::read(dir.join("named.mcap")).unwrap();
         let topics: Vec<String> = mcap::MessageStream::new(&bytes).unwrap().map(|message| message.unwrap().channel.topic.clone()).collect();
         assert_eq!(topics, vec!["/named_locations"]);
+        robot.close().await.unwrap();
+    }
+
+    /// A HardwareModule's files heard before the start (a page asked) go into the recording from the cache, what's missing
+    /// is asked for and recorded as it comes; the static tf from before the start goes in once, re-rooted; tf is
+    /// written raw on /tf_raw and with one parent per frame on /tf; and the file read back fills a fresh cache.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_recording_holds_the_hardware_files_and_a_rerooted_tf() {
+        use crate::hardware::{decode_file_info, encode_file_info, FileInfo, HardwareCache, HARDWARE_USD};
+        use crate::tf_graph::{encode_tf, Edge};
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut config = zenoh::Config::default();
+        config.insert_json5("listen/endpoints", &format!(r#"["tcp/127.0.0.1:{port}"]"#)).unwrap();
+        config.insert_json5("scouting/multicast/enabled", "false").unwrap();
+        let robot = zenoh::open(config).await.unwrap();
+        const USD_HASH: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        const MESH_HASH: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        let usd = format!("#usda 1.0\ndef Xform \"go2\" {{ def Mesh \"m\" ( assetInfo = {{ asset identifier = @go2/body.stl@ string version = \"{MESH_HASH}\" }} ) {{ }} }}\n").into_bytes();
+        let mesh = vec![7u8; 64];
+        let answer = |uri: &str, sha256: &str, content: &[u8]| encode_file_info(&FileInfo { ts: 1.0, uri: uri.into(), sha256: Some(sha256.into()), mtime: None, content: Some(content.to_vec()) });
+        // the go2 HardwareModule: answers every request on its namespace with the file
+        let (answers, files) = (robot.clone(), [(HARDWARE_USD.to_string(), (USD_HASH, usd.clone())), ("go2/body.stl".to_string(), (MESH_HASH, mesh.clone()))]);
+        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+        let heard = asked.clone();
+        let _module = robot
+            .declare_subscriber("dimos/go2/hardware_file_request/files.FileInfo")
+            .callback(move |sample| {
+                let request = decode_file_info(&sample.payload().to_bytes()).unwrap();
+                heard.lock().unwrap().push(request.uri.clone());
+                if let Some((_, (sha256, content))) = files.iter().find(|(uri, _)| *uri == request.uri) {
+                    let (answers, reply) = (answers.clone(), answer(&request.uri, sha256, content));
+                    tokio::spawn(async move { answers.put("dimos/go2/hardware_file_response/files.FileInfo", reply).await.unwrap() });
+                }
+            })
+            .await
+            .unwrap();
+        let dir = temp_dir("hardware");
+        let state = Arc::new(State::new(dir.clone(), format!("tcp/127.0.0.1:{port}")));
+        state.listen().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // before the start: a page asked for go2's USD (its answer is on the bus), and the module sent tf_static once
+        robot.put("dimos/go2/hardware_file_response/files.FileInfo", answer(HARDWARE_USD, USD_HASH, &usd)).await.unwrap();
+        let edge = |parent: &str, child: &str, z: f64, is_static: bool| Edge { parent: parent.into(), child: child.into(), stamp_sec: 1, stamp_nsec: 0, translation: [0.0, 0.0, z], rotation: [0.0, 0.0, 0.0, 1.0], is_static };
+        robot.put("dimos/go2/tf_static/tf2_msgs.TFMessage", encode_tf(&[edge("world", "odom", 0.0, true), edge("go2", "go2/base_link", 0.3, true)])).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(state.hardware.has(USD_HASH), "the USD went into the cache though nobody here asked");
+        let app = crate::api::test_router(state.clone());
+        let (status, body) = call(&app, "POST", "/api/recorder/start", r#"{"keys":["dimos/tf/tf2_msgs.TFMessage"],"name":"hardware.mcap"}"#).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // the estimate gives go2/base_link a second parent
+        robot.put("dimos/tf/tf2_msgs.TFMessage", encode_tf(&[edge("odom", "go2/base_link", 0.0, false)])).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (status, body) = call(&app, "POST", "/api/recorder/stop", "").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(asked.lock().unwrap().clone(), vec!["go2/body.stl".to_string()], "only what the cache lacked was asked for");
+        let bytes = std::fs::read(dir.join("hardware.mcap")).unwrap();
+        let mut by_topic: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
+        for message in mcap::MessageStream::new(&bytes).unwrap() {
+            let message = message.unwrap();
+            let data = if message.channel.message_encoding == "cdr" { None } else { Some(message.data.to_vec()) };
+            by_topic.entry(message.channel.topic.clone()).or_default().extend(data);
+            if message.channel.message_encoding == "cdr" {
+                by_topic.entry(format!("{} (cdr)", message.channel.topic)).or_default().push(message.data.to_vec());
+            }
+        }
+        let files: BTreeSet<String> = by_topic["/go2/hardware_file_response"].iter().map(|data| decode_file_info(data).unwrap().uri).collect();
+        assert_eq!(files, BTreeSet::from([HARDWARE_USD.to_string(), "go2/body.stl".to_string()]), "the cached USD and the mesh asked for");
+        for topic in ["/tf_static", "/tf_static_raw", "/tf", "/tf_raw"] {
+            assert!(by_topic.contains_key(&format!("{topic} (cdr)")), "{topic} written: {:?}", by_topic.keys().collect::<Vec<_>>());
+        }
+        assert_eq!(by_topic["/tf_static (cdr)"].len(), 1, "the static tf once, at the start");
+        // re-rooted from the world, the USD's edge go2 → go2/base_link is written base → go2, 0.3 m down
+        let mut rooted = TfGraph::default();
+        for edge in [edge("world", "odom", 0.0, true), edge("go2", "go2/base_link", 0.3, true), edge("odom", "go2/base_link", 0.0, false)] {
+            rooted.set(edge);
+        }
+        let flipped = rooted.reroot(&[edge("go2", "go2/base_link", 0.3, true)]);
+        assert_eq!((flipped[0].parent.as_str(), flipped[0].child.as_str(), flipped[0].translation[2]), ("go2/base_link", "go2", -0.3));
+        // read back for a replay: a fresh cache gets both files
+        let replayed = HardwareCache::new(dir.join("replayed_cache"));
+        assert_eq!(crate::hardware::load_mcap(&replayed, &dir.join("hardware.mcap")).unwrap(), 2);
+        assert_eq!(replayed.bytes(MESH_HASH), Some(mesh));
+        assert_eq!(replayed.missing("go2"), Vec::<String>::new());
         robot.close().await.unwrap();
     }
 

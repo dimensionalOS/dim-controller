@@ -141,6 +141,10 @@ pub fn routes() -> Routes<Api> {
         .endpoint("PUT", "api/recorder/settings", "you want to change the recording format, folder or topic rates", "Recording options, saved (lv.record.options): image_format (raw | png | jpegxl | webp | jpeg), compression (none | lz4 | zstd) and directory (\"\" = the default) not while recording; recordNew, logs and rates (a stream's max messages per second, 0 = every message) any time. Only the fields given change. Returns the recorder status (as GET api/recorder); 409 for a format or folder change while recording, 400 for a bad value.", json!({ "image_format": s("raw | png | jpegxl | webp | jpeg"), "compression": s("none | lz4 | zstd"), "directory": s("where recordings go; \"\" = the default (Desktop's shared recordings folder)"), "recordNew": b("topics that appear mid-recording join it"), "logs": b("record the running dimos's jsonl logs"), "rates": json!({ "type": "object", "description": "topic key -> max messages per second (0 or null = every message)" }) }), recorder::settings)
         .endpoint("GET", "api/recorder/streams", "you need to know which topics are on the bus and how heavy they are", "Each stream on the bus, biggest first: key, topic, type, bytesPerSecond and messagesPerSecond (measured live; the meter listens while this is asked for and stops 15 s after), whether it's recorded, and its maxRate. Returns {streams [...], seconds} (seconds = how long the meter has listened).", json!({}), recorder::streams)
         .endpoint("GET", "api/recorder/files/{name}", "you want to download a finished recording", "Download a recording from the recordings folder. Returns the file's bytes (application/octet-stream, as an attachment); 404 if there is no such file.", json!({ "name": required(s("the file name, as GET api/recorder lists it under files")) }), recorder::download_file)
+        .endpoint("GET", "api/hardware", "you need to know which HardwareModule files this machine holds", "Every dimos HardwareModule's files heard on the bus (hardware.usda and the meshes and images it names), kept here by sha256 for recordings and replays. Returns {modules {namespace: {uri: sha256}}, dir}.", json!({}), recorder::hardware)
+        .endpoint("GET", "api/hardware/files/{sha256}", "you need a HardwareModule's file without the module running", "One cached hardware file. Returns its bytes (application/octet-stream); 404 if it isn't here.", json!({ "sha256": required(s("sha256:<64 hex>, as GET api/hardware lists it")) }), recorder::hardware_file)
+        .endpoint("POST", "api/hardware/load", "you are replaying a recording and want its hardware drawn", "Read a recording's HardwareModule files (its hardware_file_response channels) into the cache. Returns {loaded} (how many files); 404 if the file can't be read.", json!({ "name": required(s("the recording's file name, as GET api/recorder lists it under files")) }), recorder::load_hardware)
+        .endpoint("GET", "api/sim/entities", "you need the names of a simulated world's entities", "Each entity of the running sim (dimos sim2's MujocoSim) by id, from its snapshot(): the names world_observations announces once at the start. Returns {entities {id: path}}; 503 without a running sim.", json!({}), sim_entities)
         .endpoint("DELETE", "api/recorder/files/{name}", "you want to delete a finished recording", "Delete a recording from the recordings folder (not the running one). Returns {ok, removed}; 409 if it is the running recording, 404 if there is no such file.", json!({ "name": required(s("the file name, as GET api/recorder lists it under files")) }), recorder::delete_file)
         // named locations (through the page) and annotations
         .endpoint("POST", "api/view/label", "you want to add, rename or remove a named place the way the user does in the 3D view", "Has the open page make a named-location edit as its right-click menu does: it goes to dimos's NamedLocations module (a named location, kept in its map frame, that Go to can send the robot to). action add (label, position, frame_id), rename (id, label), remove (id) or list; a location's id is its name. Returns {ok, via: named_locations, labels (what the view shows, before this edit lands)}; 400 for a missing field, 422 if no page is open, the module is not running, or the page refused it (e.g. the name is taken).", json!({ "action": s("add (the default) | rename | remove | list"), "label": s("add, rename: the location's name (unique)"), "position": json!({ "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3, "description": "add: [x, y] or [x, y, z] meters in frame_id (z defaults to 0)" }), "frame_id": s("add: the frame of position (default the 3D view's fixed frame)"), "id": s("rename, remove: the location's name, from the 3D view or action list") }), annotations::page_label)
@@ -343,6 +347,13 @@ async fn stop_robot(Extract(api): Extract<Api>, Body(body): Body) -> Response {
             Json(stopped).into_response()
         }
         Err(problem) => error_response(StatusCode::BAD_REQUEST, problem),
+    }
+}
+
+async fn sim_entities(Extract(api): Extract<Api>) -> Response {
+    match crate::sim::entities(&api.desktop_url).await {
+        Ok(entities) => Json(json!({ "entities": entities })).into_response(),
+        Err(problem) => error_response(StatusCode::SERVICE_UNAVAILABLE, problem),
     }
 }
 
@@ -669,7 +680,7 @@ mod tests {
             ) {
                 continue;
             }
-            let path = path.replace("{id}", "x").replace("{name}", "x.mcap");
+            let path = path.replace("{id}", "x").replace("{name}", "x.mcap").replace("{sha256}", "sha256:x");
             let request = axum::http::Request::builder()
                 .method(method)
                 .uri(format!("/{path}"))
