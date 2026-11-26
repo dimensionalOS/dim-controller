@@ -71,7 +71,7 @@
                         dontFixup = true;
                         outputHashMode = "recursive";
                         outputHashAlgo = "sha256";
-                        outputHash = "sha256-f8Qij8c96A5T/e0rLtBBwOzRBeo75gt4hEmRf62qg0E=";
+                        outputHash = "sha256-akd8lWFbqFbvKTbo+1Uu2zYxabZyvsH+el0OZrRCN9Y=";
                     };
 
                     # the page: React + Vite against those modules and that dimos-react cache, offline

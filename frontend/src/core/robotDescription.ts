@@ -86,6 +86,9 @@ export function groupNames(description: RobotDescription): string[] {
     return [...new Set(description.links.map((link) => link.group).filter((group): group is string => !!group))]
 }
 
+/** What a description's visual says of its surface; the default where it says nothing. */
+type Surface = { roughness?: number; metallic?: number; ior?: number }
+
 /** The three.js arm: a group per link (named by it) placed by `pose`, holding its visual and collision meshes. */
 export class RobotModel {
     readonly root = new THREE.Group()
@@ -94,8 +97,10 @@ export class RobotModel {
 
     /** `splats`: splat files by URI (core/urdfSource.ts), drawn where a visual names one; none for ghosts */
     constructor(readonly kinematics: Kinematics, geometries: Map<string, THREE.BufferGeometry>, look: { color?: string; opacity?: number; collisionColor?: string } = {}, readonly splats?: Map<string, SplatAsset>, readonly textureFiles?: Map<string, THREE.Texture>) {
-        const material = (color: THREE.ColorRepresentation, alpha: number) => {
-            const made = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.1, transparent: alpha < 1, opacity: alpha, depthWrite: alpha >= 1 })
+        const material = (color: THREE.ColorRepresentation, alpha: number, surface: Surface = {}) => {
+            const options = { color, roughness: surface.roughness ?? 0.55, metalness: surface.metallic ?? 0.1, transparent: alpha < 1, opacity: alpha, depthWrite: alpha >= 1 }
+            // an authored ior sets the reflection, Blender's way: ior 1 reflects nothing, even at grazing angles
+            const made = surface.ior === undefined ? new THREE.MeshStandardMaterial(options) : new THREE.MeshPhysicalMaterial({ ...options, ior: Math.max(1, surface.ior), specularIntensity: surface.ior > 1 ? 1 : 0 })
             this.materials.push(made)
             return made
         }
@@ -140,7 +145,7 @@ export class RobotModel {
 
     readonly #pending: { group: THREE.Group; kind: "visual" | "collision"; item: DescriptionGeometry }[] = []
     readonly #shapeOf: (geometry: DescriptionGeometry, geometries: Map<string, THREE.BufferGeometry>) => THREE.BufferGeometry | null
-    readonly #material: (color: THREE.ColorRepresentation, alpha: number) => THREE.MeshStandardMaterial
+    readonly #material: (color: THREE.ColorRepresentation, alpha: number, surface?: Surface) => THREE.MeshStandardMaterial
     readonly #look: { color?: string; opacity?: number; collisionColor?: string }
     #display: DisplayMode = "visual"
     #parts: ModelParts = { robot: true, groups: {}, meshes: true, staticMeshes: true, splats: true }
@@ -182,7 +187,7 @@ export class RobotModel {
             const color = kind === "collision"
                 ? this.#look.collisionColor ?? "#ff8a3d"
                 : this.#look.color ?? (item.color ? new THREE.Color(item.color[0], item.color[1], item.color[2]) : "#d9dde3")
-            const mesh = new THREE.Mesh(shape, this.#material(color, kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? 1)))
+            const mesh = new THREE.Mesh(shape, this.#material(color, kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? 1), kind === "visual" ? item : {}))
             // A room drawn from a description has to take part in the lighting. Without these nothing
             // occludes anything: a desk's recessed panel comes out brighter than its own side,
             // because all that is left is which way a face points at the lights.
