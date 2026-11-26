@@ -8,6 +8,7 @@ import { type HardwareModule, type HardwareSource, hardwareSource, moduleFrame, 
 import { FILE_INFO_TYPE } from "../core/fileInfo.ts"
 import { rendering } from "../core/render/rendering.ts"
 import { applyMeshStyle } from "../core/render/meshStyle.ts"
+import { claimSceneLighting, releaseSceneLighting, type SceneLighting } from "../core/sceneLighting.ts"
 
 export interface HardwareModelSettings {
     opacity: number
@@ -31,6 +32,8 @@ class HardwareModelLayer {
     #placedFor = { tf: -1, fixed: "", models: -1 }
     #models = 0
     #unplaced: string[] = []
+    /** the lights and look last claimed, as JSON, so a tf tick that moved nothing lit doesn't rebuild the lights */
+    #litFor = ""
 
     constructor(readonly context: LayerContext, readonly settings: Store<HardwareModelSettings>) {
         this.root.matrixAutoUpdate = false
@@ -119,12 +122,19 @@ class HardwareModelLayer {
         }
         this.#placedFor = { tf: tf.version, fixed: frame.fixedFrame, models: this.#models }
         const unplaced: string[] = []
-        for (const { kinematics, model } of this.#drawn.values()) {
+        const lighting: Required<Pick<SceneLighting, "lights">> & SceneLighting = { lights: [] }
+        for (const { module, kinematics, model } of this.#drawn.values()) {
             const poses = modulePoses(kinematics, (name) => tf.lookup(name, frame.fixedFrame))
             model.root.visible = !!poses
             if (!poses) {
                 unplaced.push(moduleFrame(kinematics.root))
                 continue
+            }
+            const { lights, look } = module.description!
+            lighting.lights.push(...(lights ?? []).map((light) => placedLight(light, poses.get(kinematics.root)!)))
+            lighting.look ??= look
+            if (lights?.length) {
+                lighting.textures = module.textures
             }
             for (const [link, group] of model.links) {
                 const pose = poses.get(link)
@@ -135,6 +145,7 @@ class HardwareModelLayer {
                 }
             }
         }
+        this.#light(lighting)
         if (unplaced.join() !== this.#unplaced.join()) {
             this.#unplaced = unplaced
             this.#status()
@@ -142,13 +153,34 @@ class HardwareModelLayer {
         this.context.viewer.requestRender()
     }
 
+    /** each placed module's USD lights and the first RenderSettings look, claimed for the view as the URDF layer does a world's */
+    #light(lighting: SceneLighting) {
+        const key = JSON.stringify([lighting.lights, lighting.look])
+        if (key !== this.#litFor) {
+            this.#litFor = key
+            claimSceneLighting(this.context.viewer, this, lighting)
+        }
+    }
+
     dispose() {
+        releaseSceneLighting(this.context.viewer, this)
         this.#stops.splice(0).forEach((stop) => stop())
         this.#release()
         for (const namespace of [...this.#drawn.keys()]) {
             this.#remove(namespace)
         }
     }
+}
+
+type Light = NonNullable<SceneLighting["lights"]>[number]
+
+/** a light from its USD's own space into the fixed frame, through the module's root pose (a USD's root prim sits at its origin) */
+function placedLight(light: Light, root: THREE.Matrix4): Light {
+    const position = new THREE.Vector3(...light.xyz).applyMatrix4(root)
+    const turn = new THREE.Quaternion().setFromRotationMatrix(root)
+    const quat = turn.clone().multiply(new THREE.Quaternion(...(light.quat ?? [0, 0, 0, 1])))
+    const direction = new THREE.Vector3(...light.direction).applyQuaternion(turn)
+    return { ...light, xyz: position.toArray(), quat: [quat.x, quat.y, quat.z, quat.w], direction: direction.toArray() }
 }
 
 function HardwareModelSettingsEditor({ settings }: { settings: Store<HardwareModelSettings> }) {

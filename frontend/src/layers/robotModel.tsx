@@ -15,6 +15,7 @@ import { ensureSparkRenderer, splatFiles } from "../core/splats.ts"
 import { rendering } from "../core/render/rendering.ts"
 import { applyMeshStyle } from "../core/render/meshStyle.ts"
 import { type HardwareSource, hardwareSource } from "../core/hardwareFiles.ts"
+import { claimSceneLighting, releaseSceneLighting } from "../core/sceneLighting.ts"
 
 export interface RobotModelSettings {
     opacity: number
@@ -94,8 +95,7 @@ class RobotModelLayer {
         this.root.add(this.#model.root)
         // A scene states how it is lit and how it wants to be shown; the viewer's own are guesses for when
         // nothing does.
-        this.context.viewer.setSceneLights?.(this.#kinematics.description.lights)
-        this.context.viewer.setSceneLook?.(this.#kinematics.description.look)
+        claimSceneLighting(this.context.viewer, this, this.#kinematics.description)
         this.#applyMeshStyle()
         this.#tfVersion = -1
         this.context.viewer.requestRender()
@@ -203,9 +203,8 @@ class RobotModelLayer {
         this.#stopRendering()
         this.#release()
         this.#model?.dispose()
-        // The scene that asked for its own lighting and look is going: the viewer's own stand again.
-        this.context.viewer.setSceneLights?.(null)
-        this.context.viewer.setSceneLook?.(null)
+        // The scene that asked for its own lighting and look is going: another layer's, or the viewer's own, stand again.
+        releaseSceneLighting(this.context.viewer, this)
     }
 }
 
