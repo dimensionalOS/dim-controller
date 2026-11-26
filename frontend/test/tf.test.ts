@@ -33,10 +33,12 @@ Deno.test("frames in different trees, or unknown ones, have no placement", () =>
     assertEquals(problems.roots, ["camera_root", "world"])
 })
 
-Deno.test("problems: staleness (static exempt)", async () => {
+Deno.test("problems: staleness (tf_static exempt, also once it comes again on tf)", async () => {
     const tree = new TfGraph()
     tree.set("map", "base_link", [0, 0, 0], none, false)
     tree.set("map", "static_thing", [0, 0, 0], none, true)
+    // a HardwareModule republishes its tf_static edges on tf: once seen on tf_static, an edge stays static (valid at all times)
+    tree.set("map", "static_thing", [0, 0, 0], none, false)
     assertEquals(tree.snapshot().problems.stale, [])
     await new Promise((resolve) => setTimeout(resolve, 2100))
     assertEquals(tree.snapshot().problems.stale, ["base_link"])
