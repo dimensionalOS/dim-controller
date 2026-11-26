@@ -16,7 +16,9 @@ export interface UsdParser {
     /** a layer this parser can read, by its `#usda` header rather than its name */
     isUsda(text: string): boolean
     /** the layer as the same RobotDescription parseUrdf gives; throws when the text is not a USD layer */
-    parseUsda(text: string): RobotDescription
+    parseUsda(text: string, options?: { layers?: ReadonlyMap<string, string> }): RobotDescription
+    /** the layers its `subLayers` names, as authored, for the caller to fetch and hand to parseUsda */
+    usdaSublayers?(text: string): string[]
     /** every asset path the layer names, as it authored them (the app reads them off the description instead) */
     usdaMeshUris?(text: string): string[]
     /**
@@ -99,13 +101,16 @@ function eachPrim(roots: PrimNode[], visit: (prim: PrimNode, path: string) => vo
 }
 
 /** Every prim path of a layer, as tf frames; empty when this dimos-react can't list prims. */
-export function usdPrimPaths(text: string): string[] {
+export function usdPrimPaths(text: string | readonly string[]): string[] {
     if (!parsePrims) {
         return []
     }
-    const paths: string[] = []
-    eachPrim(parsePrims(text), (_, path) => paths.push(path))
-    return paths
+    // a layer and its sublayers name the same prims by the same paths: each once
+    const paths = new Set<string>()
+    for (const layer of [text].flat()) {
+        eachPrim(parsePrims(layer), (_, path) => paths.add(path))
+    }
+    return [...paths]
 }
 
 /**
@@ -115,15 +120,17 @@ export function usdPrimPaths(text: string): string[] {
  * joints and base that name it, to its path. A name two prims share is the outer one when it holds the other (a link and
  * its own same-named mesh), else left as it is (it can't be told apart).
  */
-export function framesFromPrimPaths(description: RobotDescription, text: string): RobotDescription {
+export function framesFromPrimPaths(description: RobotDescription, text: string | readonly string[]): RobotDescription {
     if (!parsePrims) {
         return description
     }
     const pathsByName = new Map<string, Set<string>>()
-    eachPrim(parsePrims(text), (prim, path) => {
-        const name = prim.displayName ?? prim.name
-        pathsByName.set(name, (pathsByName.get(name) ?? new Set()).add(path))
-    })
+    for (const layer of [text].flat()) {
+        eachPrim(parsePrims(layer), (prim, path) => {
+            const name = prim.displayName ?? prim.name
+            pathsByName.set(name, (pathsByName.get(name) ?? new Set()).add(path))
+        })
+    }
     const rename = (name: string) => {
         const paths = [...pathsByName.get(name) ?? []]
         // a link's mesh named as its link (`…/pelvis/pelvis`) is under it: the outermost prim holding all the others is the link

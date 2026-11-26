@@ -1,20 +1,25 @@
 // Each dimos HardwareModule's own USD (core/hardwareFiles.ts) drawn at its root frame from tf, one model per module namespace (no composed world)
 import * as THREE from "three"
 import { registerLayer, type LayerContext } from "../core/layers/registry.ts"
-import { type Store, useStore } from "../core/store.ts"
-import { Field, Slider, Toggle } from "dimos-react"
+import { Store, useStore } from "../core/store.ts"
+import { Field, Select, Slider, Toggle } from "dimos-react"
 import { Kinematics, RobotModel } from "../core/robotDescription.ts"
 import { type HardwareModule, type HardwareSource, hardwareSource, moduleFrame, modulePoses } from "../core/hardwareFiles.ts"
 import { FILE_INFO_TYPE } from "../core/fileInfo.ts"
 import { rendering } from "../core/render/rendering.ts"
 import { applyMeshStyle } from "../core/render/meshStyle.ts"
-import { claimSceneLighting, releaseSceneLighting, type SceneLighting } from "../core/sceneLighting.ts"
+import { claimSceneLighting, placed, releaseSceneLighting, type SceneLighting } from "../core/sceneLighting.ts"
 
 export interface HardwareModelSettings {
     opacity: number
     /** visual meshes in their materials, or plain flat grey */
     textures: boolean
+    /** the USD camera (its prim path) the view looks through, its pose and lens; "" for the view's own */
+    camera?: string
 }
+
+/** every module's USD cameras, by prim path, for the settings to choose from */
+const cameraChoices = new WeakMap<Store<HardwareModelSettings>, Store<[string, string][]>>()
 
 interface Drawn {
     module: HardwareModule
@@ -34,6 +39,8 @@ class HardwareModelLayer {
     #unplaced: string[] = []
     /** the lights and look last claimed, as JSON, so a tf tick that moved nothing lit doesn't rebuild the lights */
     #litFor = ""
+    /** the camera last looked through, as JSON */
+    #lookingFrom = ""
 
     constructor(readonly context: LayerContext, readonly settings: Store<HardwareModelSettings>) {
         this.root.matrixAutoUpdate = false
@@ -106,7 +113,7 @@ class HardwareModelLayer {
             return
         }
         const wanted = modules.reduce((sum, module) => sum + module.files.length, 0)
-        const loaded = modules.reduce((sum, module) => sum + module.geometries.size + module.textures.size, 0)
+        const loaded = modules.reduce((sum, module) => sum + module.geometries.size + module.textures.size + module.layers.size, 0)
         const problems = modules.filter((module) => module.problem).map((module) => module.problem)
         const unplaced = this.#unplaced.length ? `no tf for ${this.#unplaced.join(", ")}` : null
         this.context.setStatus({
@@ -122,7 +129,9 @@ class HardwareModelLayer {
         }
         this.#placedFor = { tf: tf.version, fixed: frame.fixedFrame, models: this.#models }
         const unplaced: string[] = []
-        const lighting: Required<Pick<SceneLighting, "lights">> & SceneLighting = { lights: [] }
+        const textures = new Map<string, THREE.Texture>()
+        const cameras: NonNullable<HardwareModule["description"]>["cameras"] & object = []
+        const lighting: Required<Pick<SceneLighting, "lights">> & SceneLighting = { lights: [], textures }
         for (const { module, kinematics, model } of this.#drawn.values()) {
             const poses = modulePoses(kinematics, (name) => tf.lookup(name, frame.fixedFrame))
             model.root.visible = !!poses
@@ -131,10 +140,16 @@ class HardwareModelLayer {
                 continue
             }
             const { lights, look } = module.description!
-            lighting.lights.push(...(lights ?? []).map((light) => placedLight(light, poses.get(kinematics.root)!)))
-            lighting.look ??= look
-            if (lights?.length) {
-                lighting.textures = module.textures
+            cameras.push(...(module.description!.cameras ?? []).map((camera) => placed(camera, poses, kinematics.root)))
+            lighting.lights.push(...(lights ?? []).map((light) => placed(light, poses, kinematics.root)))
+            // each module's look fills in what the ones before it left unsaid
+            lighting.look = { ...look, ...lighting.look }
+            // every module's dome pictures, by the path its lights name them
+            for (const light of lights ?? []) {
+                const picture = light.texture ? module.textures.get(light.texture) : undefined
+                if (picture) {
+                    textures.set(light.texture!, picture)
+                }
             }
             for (const [link, group] of model.links) {
                 const pose = poses.get(link)
@@ -145,7 +160,11 @@ class HardwareModelLayer {
                 }
             }
         }
+        if (lighting.look && !Object.keys(lighting.look).length) {
+            delete lighting.look
+        }
         this.#light(lighting)
+        this.#lookThrough(cameras)
         if (unplaced.join() !== this.#unplaced.join()) {
             this.#unplaced = unplaced
             this.#status()
@@ -155,14 +174,32 @@ class HardwareModelLayer {
 
     /** each placed module's USD lights and the first RenderSettings look, claimed for the view as the URDF layer does a world's */
     #light(lighting: SceneLighting) {
-        const key = JSON.stringify([lighting.lights, lighting.look])
+        const key = JSON.stringify([lighting.lights, lighting.look, [...(lighting.textures?.keys() ?? [])]])
         if (key !== this.#litFor) {
             this.#litFor = key
             claimSceneLighting(this.context.viewer, this, lighting)
         }
     }
 
+    /** looks through the camera the settings name (placed by its link), or gives the view back when that is none */
+    #lookThrough(cameras: NonNullable<NonNullable<HardwareModule["description"]>["cameras"]>) {
+        const choices = cameraChoiceStore(this.settings)
+        const listed: [string, string][] = cameras.map((camera) => [camera.path, camera.selected ? `${camera.name} (the render settings')` : camera.name])
+        if (JSON.stringify(listed) !== JSON.stringify(choices.get())) {
+            choices.set(listed)
+        }
+        const wanted = cameras.find((camera) => camera.path === this.settings.get().camera) ?? null
+        const key = JSON.stringify(wanted)
+        if (key !== this.#lookingFrom) {
+            this.#lookingFrom = key
+            this.context.viewer.viewThrough?.(wanted)
+        }
+    }
+
     dispose() {
+        if (this.#lookingFrom !== "null" && this.#lookingFrom !== "") {
+            this.context.viewer.viewThrough?.(null)
+        }
         releaseSceneLighting(this.context.viewer, this)
         this.#stops.splice(0).forEach((stop) => stop())
         this.#release()
@@ -172,25 +209,29 @@ class HardwareModelLayer {
     }
 }
 
-type Light = NonNullable<SceneLighting["lights"]>[number]
-
-/** a light from its USD's own space into the fixed frame, through the module's root pose (a USD's root prim sits at its origin) */
-function placedLight(light: Light, root: THREE.Matrix4): Light {
-    const position = new THREE.Vector3(...light.xyz).applyMatrix4(root)
-    const turn = new THREE.Quaternion().setFromRotationMatrix(root)
-    const quat = turn.clone().multiply(new THREE.Quaternion(...(light.quat ?? [0, 0, 0, 1])))
-    const direction = new THREE.Vector3(...light.direction).applyQuaternion(turn)
-    return { ...light, xyz: position.toArray(), quat: [quat.x, quat.y, quat.z, quat.w], direction: direction.toArray() }
+function cameraChoiceStore(settings: Store<HardwareModelSettings>): Store<[string, string][]> {
+    let choices = cameraChoices.get(settings)
+    if (!choices) {
+        choices = new Store<[string, string][]>([])
+        cameraChoices.set(settings, choices)
+    }
+    return choices
 }
 
 function HardwareModelSettingsEditor({ settings }: { settings: Store<HardwareModelSettings> }) {
     const value = useStore(settings)
+    const cameras = useStore(cameraChoiceStore(settings))
     return (
         <>
             <Field inline label="Opacity">
                 <Slider min={0.1} max={1} step={0.05} value={value.opacity} format={(opacity: number) => `${Math.round(opacity * 100)}%`} onChange={(opacity: number) => settings.update({ opacity })} />
             </Field>
             <Field inline label="Textures"><Toggle value={value.textures ?? true} onChange={(textures: boolean) => settings.update({ textures })} /></Field>
+            {cameras.length > 0 && (
+                <Field inline label="View through">
+                    <Select value={value.camera ?? ""} options={[["", "the view's own camera"], ...cameras]} onChange={(camera: string) => settings.update({ camera })} />
+                </Field>
+            )}
         </>
     )
 }

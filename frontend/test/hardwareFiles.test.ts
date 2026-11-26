@@ -386,3 +386,22 @@ Deno.test("a module's links placed at their tf frames, its root by tf", () => {
     assertEquals(new THREE.Vector3().setFromMatrixPosition(poses.get("go2/lidar/base_link")!).toArray(), [1, 0, 0.3], "the lidar's base_link under the dog's")
     assertEquals(modulePoses(kinematicsOf("spot/base_link"), (frame) => tf.lookup(frame, "world")), null, "no tf for its root: not placed")
 })
+
+Deno.test("a USD naming a sublayer: the sublayer is asked for, and the USD read again with it composed in", async () => {
+    await withCache(new IDBFactory(), async () => {
+        const root = new TextEncoder().encode(`#usda 1.0
+(
+    defaultPrim = "go2"
+    subLayers = [@./body.usda@]
+)
+`)
+        const body = new TextEncoder().encode(usd(MESH_HASH, { frame: "go2/base_link" }).replace(/^#usda 1.0\n\(\n[^)]*\)\n/, "#usda 1.0\n"))
+        const { connection, requests } = await bus({ "go2": new Map([[HARDWARE_USD, root], ["./body.usda", body], [MESH_NAME, MESH]]) })
+        const source = new HardwareSource(connection, robotTf())
+        const release = source.acquire()
+        await until(() => loaded(source, "go2") === 1)
+        assertEquals(requests.filter((request) => request.info.uri === "./body.usda").length, 1, "the sublayer asked for once")
+        assertEquals(source.state.get().modules.get("go2")?.description?.links.map((link) => link.name), ["go2/base_link"], "its body drawn from the sublayer")
+        release()
+    })
+})

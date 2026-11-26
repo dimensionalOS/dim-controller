@@ -72,6 +72,9 @@ export interface HardwareModule {
     unservable: Set<string>
     /** every prim of its USD as a tf frame (its prim path): the frames tf calls hardware (core/tf.ts) */
     frames: string[]
+    /** its hardware.usda's text, and the sublayers it names (as authored) with those that have come in */
+    source: string
+    layers: Map<string, string>
     problem: string | null
 }
 
@@ -86,7 +89,7 @@ const splitName = (key: string) => {
     const at = key.indexOf("\n")
     return { namespace: key.slice(0, at), uri: key.slice(at + 1) }
 }
-const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), frames: [], problem })
+const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), frames: [], problem, source: "", layers: new Map() })
 
 export class HardwareSource {
     readonly state = new Store<HardwareState>({ modules: new Map(), version: 0 })
@@ -103,7 +106,7 @@ export class HardwareSource {
     /** sha256 → the module files (nameKey) waiting for those bytes, so a file two modules share is asked for once */
     #waiting = new Map<string, Set<string>>()
     /** sha256 → its mesh or image, decoded once for every module that names it */
-    #decoded = new Map<string, Promise<THREE.BufferGeometry | THREE.Texture>>()
+    #decoded = new Map<string, Promise<THREE.BufferGeometry | THREE.Texture | string>>()
     /** module files already said in the console to be unservable */
     #saidUnservable = new Set<string>()
 
@@ -310,15 +313,24 @@ export class HardwareSource {
             return
         }
         const text = new TextDecoder().decode(bytes)
+        this.#describe({ ...blank(namespace, sha256), source: text }, parser)
+    }
+
+    /** reads a module's USD with the sublayers in so far, and asks for those it names and hasn't got (each then reads it again) */
+    #describe(base: HardwareModule, parser: NonNullable<ReturnType<typeof usdParser>>) {
+        const { namespace, sha256, source: text, layers } = base
         let description: RobotDescription
         try {
-            description = framesFromPrimPaths(parser.parseUsda(text), text)
+            description = framesFromPrimPaths(parser.parseUsda(text, { layers }), [text, ...layers.values()])
         } catch (error) {
             this.#setModule(blank(namespace, sha256, `${namespace || "/"}${HARDWARE_USD}: ${error}`))
             return
         }
+        // a sublayer's own sublayers are named as authored too, and composed under it
+        const sublayers = [text, ...layers.values()].flatMap((layer) => parser.usdaSublayers?.(layer) ?? [])
+        const missing = [...new Set(sublayers)].filter((path) => !layers.has(path))
         const hashes = usdAssetHashes(text, parser)
-        const module: HardwareModule = { ...blank(namespace, sha256), description, files: meshUris(description), frames: usdPrimPaths(text).map(moduleFrame) }
+        const module: HardwareModule = { ...base, description, files: [...meshUris(description), ...missing], frames: usdPrimPaths([text, ...layers.values()]).map(moduleFrame), geometries: base.geometries, textures: base.textures }
         this.#setModule(module)
         meshLog(`hardware ${namespace || "(top level)"}: ${module.files.length} files, ${module.files.filter((uri) => hashes.has(uri)).length} hashed`)
         module.files.forEach((uri) => this.#wantAsset(module, uri, hashes.get(uri) ?? null))
@@ -357,7 +369,7 @@ export class HardwareSource {
     /** a module's current USD names this file, it isn't in yet, and the module hasn't said it can't serve it */
     #isWanted(namespace: string, uri: string): boolean {
         const module = this.state.get().modules.get(namespace)
-        return !!module?.files.includes(uri) && !module.geometries.has(uri) && !module.textures.has(uri) && !module.unservable.has(uri)
+        return !!module?.files.includes(uri) && !module.geometries.has(uri) && !module.textures.has(uri) && !module.layers.has(uri) && !module.unservable.has(uri)
     }
 
     #sayUnservable(namespace: string, uri: string) {
@@ -419,7 +431,9 @@ export class HardwareSource {
 
     /** decodes the bytes once and hands them to this module file and every other one waiting for the same hash */
     #deliver(namespace: string, uri: string, sha256: string | null, bytes: Uint8Array) {
-        const decoded = (isImage(uri) ? imageTexture(bytes, uri) : Promise.resolve().then(() => meshGeometry(uri, bytes))) as Promise<THREE.BufferGeometry | THREE.Texture>
+        // a sublayer is text for the USD to be read again with; anything else is a mesh or an image
+        const sublayer = [...this.state.get().modules.values()].some((module) => module.namespace === namespace && module.description && this.#sublayerOf(module, uri))
+        const decoded = (sublayer ? Promise.resolve(new TextDecoder().decode(bytes)) : isImage(uri) ? imageTexture(bytes, uri) : Promise.resolve().then(() => meshGeometry(uri, bytes))) as Promise<THREE.BufferGeometry | THREE.Texture | string>
         const names = new Set([nameKey(namespace, uri)])
         if (sha256) {
             this.#decoded.set(sha256, decoded)
@@ -434,7 +448,13 @@ export class HardwareSource {
         }
     }
 
-    #attach(namespace: string, uri: string, decoded: Promise<THREE.BufferGeometry | THREE.Texture>) {
+    /** whether `uri` is a layer the module's USD (or one of its sublayers) names in its subLayers */
+    #sublayerOf(module: HardwareModule, uri: string): boolean {
+        const parser = usdParser()
+        return [module.source, ...module.layers.values()].some((layer) => parser?.usdaSublayers?.(layer).includes(uri))
+    }
+
+    #attach(namespace: string, uri: string, decoded: Promise<THREE.BufferGeometry | THREE.Texture | string>) {
         const module = this.state.get().modules.get(namespace)
         if (!module || !this.#isWanted(namespace, uri)) {
             return
@@ -443,7 +463,15 @@ export class HardwareSource {
             if (this.state.get().modules.get(namespace) !== module) {
                 return
             }
-            if (isImage(uri)) {
+            if (typeof value === "string") {
+                // a sublayer: the USD is read again with it composed in
+                module.layers.set(uri, value)
+                const parser = usdParser()
+                if (parser) {
+                    this.#describe(module, parser)
+                }
+                return
+            } else if (isImage(uri)) {
                 module.textures.set(uri, value as THREE.Texture)
             } else {
                 module.geometries.set(uri, value as THREE.BufferGeometry)
