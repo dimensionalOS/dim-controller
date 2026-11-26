@@ -4,6 +4,8 @@ import * as THREE from "three"
 import type { DescriptionGeometry, JointPositions, Origin, RobotDescription } from "dimos-react/three"
 import { Kinematics } from "dimos-react/three"
 import type { SplatAsset, SplatObject } from "./splats.ts"
+import { hangImages, type Surface, surfaceImages, surfaceMaterial } from "./usdMaterial.ts"
+import { meshLooks } from "dimos-react/three"
 
 export { basePose, Kinematics, urdfPositions } from "dimos-react/three"
 export type { DescriptionGeometry, DescriptionJoint, DescriptionLink, JointPositions, Origin, RobotDescription } from "dimos-react/three"
@@ -13,9 +15,8 @@ const originMatrix = (origin: Origin) =>
 
 export type DisplayMode = "visual" | "collision" | "both"
 
-/** How much of a surface one tile of its texture covers. Concrete at a couple of metres a tile
- * reads as a slab; stretched whole over a room it is a smear. */
-const TEXTURE_TILE_METRES = 2
+/** A gprim (a Cube, a Plane) has no st of its own: its image is laid a repeat per this many metres, as nothing says otherwise. */
+const GPRIM_TILE_METRES = 2
 
 /** How far a shape reaches across the two axes a texture is laid along. */
 function spanOf(item: DescriptionGeometry): [number, number] {
@@ -86,9 +87,6 @@ export function groupNames(description: RobotDescription): string[] {
     return [...new Set(description.links.map((link) => link.group).filter((group): group is string => !!group))]
 }
 
-/** What a description's visual says of its surface; the default where it says nothing. */
-type Surface = { roughness?: number; metallic?: number; ior?: number }
-
 /** The three.js arm: a group per link (named by it) placed by `pose`, holding its visual and collision meshes. */
 export class RobotModel {
     readonly root = new THREE.Group()
@@ -98,16 +96,15 @@ export class RobotModel {
     /** `splats`: splat files by URI (core/urdfSource.ts), drawn where a visual names one; none for ghosts */
     constructor(readonly kinematics: Kinematics, geometries: Map<string, THREE.BufferGeometry>, look: { color?: string; opacity?: number; collisionColor?: string } = {}, readonly splats?: Map<string, SplatAsset>, readonly textureFiles?: Map<string, THREE.Texture>) {
         const material = (color: THREE.ColorRepresentation, alpha: number, surface: Surface = {}) => {
-            const options = { color, roughness: surface.roughness ?? 0.55, metalness: surface.metallic ?? 0.1, transparent: alpha < 1, opacity: alpha, depthWrite: alpha >= 1 }
-            // an authored ior sets the reflection, Blender's way: ior 1 reflects nothing, even at grazing angles
-            const made = surface.ior === undefined ? new THREE.MeshStandardMaterial(options) : new THREE.MeshPhysicalMaterial({ ...options, ior: Math.max(1, surface.ior), specularIntensity: surface.ior > 1 ? 1 : 0 })
+            const made = surfaceMaterial(color, alpha, surface)
             this.materials.push(made)
             return made
         }
         const shapeOf = (geometry: DescriptionGeometry, geometries: Map<string, THREE.BufferGeometry>): THREE.BufferGeometry | null => {
             switch (geometry.type) {
                 case "mesh":
-                    return geometry.mesh ? geometries.get(geometry.mesh) ?? null : null
+                    // a mesh the layer authors itself comes built; a file's arrives later
+                    return geometry.geometry ?? (geometry.mesh ? geometries.get(geometry.mesh) ?? null : null)
                 case "box":
                     return new THREE.BoxGeometry(...(geometry.size ?? [0.1, 0.1, 0.1]))
                 case "sphere":
@@ -121,6 +118,12 @@ export class RobotModel {
                 case "plane":
                     // a size[0] by size[1] face in xy facing +z, which is how three lays out PlaneGeometry
                     return new THREE.PlaneGeometry(geometry.size?.[0] ?? 1, geometry.size?.[1] ?? 1)
+                case "capsule":
+                    // its length between the caps, along z as a cylinder's
+                    return new THREE.CapsuleGeometry(geometry.radius ?? 0.05, geometry.length ?? 0.1, 8, 24).rotateX(Math.PI / 2)
+                case "cone":
+                    // three's apex is up its y, USD's up its axis: z here
+                    return new THREE.ConeGeometry(geometry.radius ?? 0.05, geometry.length ?? 0.1, 24).rotateX(Math.PI / 2)
             }
         }
         this.#shapeOf = shapeOf
@@ -187,7 +190,16 @@ export class RobotModel {
             const color = kind === "collision"
                 ? this.#look.collisionColor ?? "#ff8a3d"
                 : this.#look.color ?? (item.color ? new THREE.Color(item.color[0], item.color[1], item.color[2]) : "#d9dde3")
-            const mesh = new THREE.Mesh(shape, this.#material(color, kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? 1), kind === "visual" ? item : {}))
+            const alpha = kind === "collision" ? Math.min(opacity, 0.45) : opacity * (item.color?.[3] ?? item.opacity ?? 1)
+            // a USD mesh layer's groups each in their own material, its corners in their own colours (the colour attribute)
+            const looks = kind === "visual" && !this.#look.color ? meshLooks(shape) : []
+            const surfaces: Surface[] = looks.length
+                ? looks.map((look) => ({ ...look, vertexColors: true }))
+                : [kind === "visual" ? { ...item, ...(item.texture && !item.textures ? { textures: { diffuse: legacyTexture(item.texture) } } : {}) } : {}]
+            const materials = looks.length
+                ? looks.map((look, index) => this.#material("#ffffff", opacity * (look.color?.[3] ?? 1), surfaces[index]))
+                : [this.#material(color, alpha, surfaces[0])]
+            const mesh = new THREE.Mesh(shape, materials.length === 1 ? materials[0] : materials)
             // A room drawn from a description has to take part in the lighting. Without these nothing
             // occludes anything: a desk's recessed panel comes out brighter than its own side,
             // because all that is left is which way a face points at the lights.
@@ -195,9 +207,10 @@ export class RobotModel {
             mesh.receiveShadow = kind === "visual"
             mesh.userData.kind = kind
             mesh.userData.meshFile = item.type === "mesh"
-            // the picture the material named, hung on once the file is in (it arrives after the shape)
-            mesh.userData.textureUri = item.texture
-            mesh.userData.textureSpan = spanOf(item)
+            // the images each material reads, hung on once the files are in (they arrive after the shape)
+            mesh.userData.surfaces = surfaces
+            // a gprim has no st of its own: its images are laid over its extent
+            mesh.userData.textureSpan = item.type === "mesh" ? null : spanOf(item)
             mesh.userData.textured = mesh.material
             mesh.matrixAutoUpdate = false
             mesh.matrix.copy(originMatrix(item.origin))
@@ -268,7 +281,7 @@ export class RobotModel {
         this.root.traverse((object) => {
             const mesh = object as THREE.Mesh
             if (mesh.isMesh && mesh.userData.kind === "visual") {
-                for (const material of [mesh.userData.textured, mesh.userData.plain] as (THREE.MeshStandardMaterial | undefined)[]) {
+                for (const material of [mesh.userData.textured, mesh.userData.plain].flat() as (THREE.MeshStandardMaterial | undefined)[]) {
                     if (material) {
                         material.color.set(color)
                         material.opacity = opacity
@@ -280,15 +293,7 @@ export class RobotModel {
         })
     }
 
-    /** Each visual mesh in its own material (URDF colours), or with textures off a flat-shaded grey at the same opacity. */
-    /**
-     * Give each shape the picture its material named, once that file has arrived.
-     *
-     * The shape is drawn before its image is fetched, so this runs on every fill rather than at
-     * build time. One tile is cloned per shape because the repeat differs: a tile stretched whole
-     * across eighteen metres of floor is a blur, so it is laid at a fixed size in metres and the
-     * shape's own extent says how many times that is.
-     */
+    /** Gives each material the images it reads once their files have arrived (the shape is drawn before them). */
     #hangTextures() {
         if (!this.textureFiles?.size) {
             return
@@ -296,29 +301,14 @@ export class RobotModel {
         for (const link of this.links.values()) {
             for (const object of link.children) {
                 const mesh = object as THREE.Mesh
-                const uri = mesh.userData.textureUri as string | undefined
-                if (!mesh.isMesh || !uri || mesh.userData.textureHung) {
+                const surfaces = mesh.userData.surfaces as Surface[] | undefined
+                if (!mesh.isMesh || !surfaces || mesh.userData.textureHung || !surfaces.some((surface) => surfaceImages(surface).length)) {
                     continue
                 }
-                const source = this.textureFiles.get(uri)
-                if (!source) {
-                    continue
-                }
-                const span = (mesh.userData.textureSpan as [number, number] | undefined) ?? [1, 1]
-                const tile = source.clone()
-                tile.needsUpdate = true
-                tile.repeat.set(Math.max(1, span[0] / TEXTURE_TILE_METRES), Math.max(1, span[1] / TEXTURE_TILE_METRES))
-                for (const material of [mesh.userData.textured, mesh.material] as (THREE.MeshStandardMaterial | undefined)[]) {
-                    if (material && "map" in material) {
-                        material.map = tile
-                        // displayColor is what to draw *instead of* the picture, for a reader that
-                        // cannot fetch it -- not a tint over it. three multiplies the two, so
-                        // leaving a slab's grey on top of its concrete renders the floor near black.
-                        material.color.setRGB(1, 1, 1)
-                        material.needsUpdate = true
-                    }
-                }
-                mesh.userData.textureHung = true
+                const materials = [mesh.userData.textured].flat() as THREE.MeshStandardMaterial[]
+                const span = mesh.userData.textureSpan as [number, number] | null
+                const tile = span ? { span, metres: GPRIM_TILE_METRES } : undefined
+                mesh.userData.textureHung = materials.every((material, index) => hangImages(material, surfaces[index] ?? {}, this.textureFiles!, tile))
             }
         }
     }
@@ -329,9 +319,9 @@ export class RobotModel {
             if (!mesh.isMesh || mesh.userData.kind !== "visual" || !mesh.userData.textured) {
                 return
             }
-            const textured = mesh.userData.textured as THREE.MeshStandardMaterial
+            const textured = mesh.userData.textured as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
             if (!this.#textures && !mesh.userData.plain) {
-                const plain = this.#material(this.#tint?.color ?? "#9aa0a6", textured.opacity)
+                const plain = this.#material(this.#tint?.color ?? "#9aa0a6", [textured].flat()[0].opacity)
                 plain.flatShading = true
                 mesh.userData.plain = plain
             }
@@ -372,4 +362,9 @@ export class RobotModel {
         })
         this.materials.forEach((material) => material.dispose())
     }
+}
+
+/** an image named only as a visual's `texture` (a description from before `textures`): a diffuse colour, tiled */
+function legacyTexture(file: string): NonNullable<NonNullable<DescriptionGeometry["textures"]>["diffuse"]> {
+    return { file, channel: "rgb", wrapS: "repeat", wrapT: "repeat", colorSpace: "auto" }
 }
