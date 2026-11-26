@@ -78,3 +78,60 @@ export function usdAssetHashes(text: string, of: UsdParser): Map<string, string>
         return new Map()
     }
 }
+
+/** The prim tree as dimos-react reads it (parsePrims), when its bundle has it. */
+interface PrimNode {
+    name: string
+    displayName?: string
+    meta: Record<string, string>
+    children: PrimNode[]
+}
+
+const parsePrims = (three as unknown as { parsePrims?: (text: string) => PrimNode[] }).parsePrims
+
+/** Each prim's path in tf's spelling, `/go2/head` → `go2/head` (dimos: every provided prim sits under its module's namespace, so the path is the frame). */
+function eachPrim(roots: PrimNode[], visit: (prim: PrimNode, path: string) => void, prefix = "") {
+    for (const prim of roots) {
+        const path = prefix ? `${prefix}/${prim.name}` : prim.name
+        visit(prim, path)
+        eachPrim(prim.children, visit, path)
+    }
+}
+
+/** Every prim path of a layer, as tf frames; empty when this dimos-react can't list prims. */
+export function usdPrimPaths(text: string): string[] {
+    if (!parsePrims) {
+        return []
+    }
+    const paths: string[] = []
+    eachPrim(parsePrims(text), (_, path) => paths.push(path))
+    return paths
+}
+
+/**
+ * The description with its links named by their prim paths rather than their displayName: a HardwareModule's tf frame
+ * IS the prim path (dimos/core/hardware_module.py), and a displayName is only a label. dimos-react's parser names a
+ * link by its displayName (UsdManager's older dialect, where it held the tf name); this renames each link, and the
+ * joints and base that name it, to its path. A name two prims share is left as it is (it can't be told apart).
+ */
+export function framesFromPrimPaths(description: RobotDescription, text: string): RobotDescription {
+    if (!parsePrims) {
+        return description
+    }
+    const pathsByName = new Map<string, Set<string>>()
+    eachPrim(parsePrims(text), (prim, path) => {
+        const name = prim.displayName ?? prim.name
+        pathsByName.set(name, (pathsByName.get(name) ?? new Set()).add(path))
+    })
+    const rename = (name: string) => {
+        const paths = pathsByName.get(name)
+        return paths?.size === 1 ? [...paths][0] : name
+    }
+    return {
+        ...description,
+        base_link: rename(description.base_link),
+        base_frame: rename(description.base_frame),
+        links: description.links.map((link) => ({ ...link, name: rename(link.name) })),
+        joints: description.joints.map((joint) => ({ ...joint, parent: rename(joint.parent), child: rename(joint.child) })),
+    }
+}

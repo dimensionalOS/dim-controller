@@ -7,11 +7,12 @@ import { Store } from "./store.ts"
 import { type Connection, dimosKey, Priority, type Publisher } from "./transport.ts"
 import { decodeFileInfo, encodeFileInfo, FILE_INFO_TYPE, type FileInfo } from "./fileInfo.ts"
 import { cachedBytes, knownHash, rememberHash, storeBytes } from "./hardwareCache.ts"
-import { usdAssetHashes, usdParser } from "./usd.ts"
+import { framesFromPrimPaths, usdAssetHashes, usdParser, usdPrimPaths } from "./usd.ts"
 import { imageTexture, isImage } from "./imageTexture.ts"
 import { meshLog } from "./meshCache.ts"
 import { stripFrame } from "./namespace.ts"
 import type { RobotDescription } from "./robotDescription.ts"
+import type { TfGraph } from "./tf.ts"
 
 /** the name every HardwareModule serves its USD as */
 export const HARDWARE_USD = "hardware.usda"
@@ -35,7 +36,7 @@ export function framePrefixes(frame: string): string[] {
     return parts.map((_, index) => parts.slice(0, parts.length - index).join("/")).concat("")
 }
 
-/** a link's tf frame: dimos names a served USD's frames by their tf names (prefix_usd_frames), so only the page's own namespace comes off, as it does tf's */
+/** a link's tf frame: its prim path (framesFromPrimPaths), the page's own namespace off as it is off tf's */
 export const moduleFrame = (link: string) => stripFrame(link)
 
 /** Every link of a module's USD in the fixed frame: at its own tf frame, else its root's through the joints; null while tf has no root frame. */
@@ -69,6 +70,8 @@ export interface HardwareModule {
     files: string[]
     /** files the module names but answered it can't serve (a header with no sha256) */
     unservable: Set<string>
+    /** every prim of its USD as a tf frame (its prim path): the frames tf calls hardware (core/tf.ts) */
+    frames: string[]
     problem: string | null
 }
 
@@ -83,7 +86,7 @@ const splitName = (key: string) => {
     const at = key.indexOf("\n")
     return { namespace: key.slice(0, at), uri: key.slice(at + 1) }
 }
-const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), problem })
+const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), frames: [], problem })
 
 export class HardwareSource {
     readonly state = new Store<HardwareState>({ modules: new Map(), version: 0 })
@@ -278,13 +281,13 @@ export class HardwareSource {
         const text = new TextDecoder().decode(bytes)
         let description: RobotDescription
         try {
-            description = parser.parseUsda(text)
+            description = framesFromPrimPaths(parser.parseUsda(text), text)
         } catch (error) {
             this.#setModule(blank(namespace, sha256, `${namespace || "/"}${HARDWARE_USD}: ${error}`))
             return
         }
         const hashes = usdAssetHashes(text, parser)
-        const module: HardwareModule = { ...blank(namespace, sha256), description, files: meshUris(description) }
+        const module: HardwareModule = { ...blank(namespace, sha256), description, files: meshUris(description), frames: usdPrimPaths(text).map(moduleFrame) }
         this.#setModule(module)
         meshLog(`hardware ${namespace || "(top level)"}: ${module.files.length} files, ${module.files.filter((uri) => hashes.has(uri)).length} hashed`)
         module.files.forEach((uri) => this.#wantAsset(module, uri, hashes.get(uri) ?? null))
@@ -433,6 +436,9 @@ export class HardwareSource {
     #setModule(module: HardwareModule) {
         const modules = new Map(this.state.get().modules)
         modules.set(module.namespace, module)
+        // its prims are the hardware frames tf's edges are classified by (core/tf.ts): none until its USD is read
+        const graph = this.tf as Partial<Pick<TfGraph, "setHardware">>
+        graph.setHardware?.(module.namespace, module.frames.length ? module.frames : null)
         this.state.set({ modules, version: this.state.get().version + 1 })
     }
 

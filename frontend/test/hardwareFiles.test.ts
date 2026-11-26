@@ -1,9 +1,10 @@
 // HardwareSource (core/hardwareFiles.ts) against a fake gateway and fake HardwareModules answering as dimos's do: found from tf frames, no polling,
 // conditional requests by sha256, an IndexedDB cache that survives a reload, a mesh two modules share fetched once, an announcement replacing a model
-import { assertEquals } from "jsr:@std/assert@1"
+import { assert, assertEquals } from "jsr:@std/assert@1"
 import { IDBFactory } from "npm:fake-indexeddb@6.0.0"
 import * as THREE from "three"
-import { Kinematics, TfTree } from "dimos-react/three"
+import { Kinematics } from "dimos-react/three"
+import { TfGraph } from "../src/core/tf.ts"
 import { Store } from "../src/core/store.ts"
 import type { Connection, ConnectionState } from "../src/core/transport.ts"
 import { decodeFileInfo, encodeFileInfo, type FileInfo } from "../src/core/fileInfo.ts"
@@ -27,19 +28,27 @@ async function sha256(bytes: Uint8Array): Promise<string> {
     return "sha256:" + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
-/** a module's USD as dimos serves it: one link whose display name is its tf frame (prefix_usd_frames), one mesh named "<prim path>/<file>" relative to the module and hashed in assetInfo */
-const usd = (hash: string, { frame = "base_link", mesh = MESH_NAME, note = "" } = {}) => `#usda 1.0
+/**
+ * A module's USD as dimos serves it: its prims nested under the module's namespace, so a link's prim path is its tf
+ * frame (`/go2/lidar/base_link` is go2/lidar/base_link); the displayName only a label, which must not name the frame. One
+ * mesh named "<prim path>/<file>" relative to the module and hashed in assetInfo.
+ */
+const usd = (hash: string, { frame = "base_link", mesh = MESH_NAME, note = "" } = {}) => {
+    const parts = frame.split("/")
+    const link = parts.pop()!
+    const open = parts.map((part) => `def Xform "${part}"\n{\n`).join("")
+    const close = parts.map(() => "}\n").join("")
+    return `#usda 1.0
 (
-    defaultPrim = "arm"
+    defaultPrim = "${parts[0] ?? link}"
     metersPerUnit = 1
     upAxis = "Z"
 )
 ${note}
-def Xform "arm"
-{
-    def Xform "base_link" (
+${open}
+    def Xform "${link}" (
         prepend apiSchemas = ["PhysicsRigidBodyAPI"]
-        displayName = "${frame}"
+        displayName = "Base Link (a label)"
     )
     {
         def Mesh "visual_0" (
@@ -52,8 +61,8 @@ def Xform "arm"
         {
         }
     }
+${close}`
 }
-`
 
 const MESH_NAME = "arm/base_link/visual_0/arm.stl"
 const MESH = stl()
@@ -154,8 +163,8 @@ async function bus(modules: Record<string, Files>) {
 
 const identity: [number, number, number, number] = [0, 0, 0, 1]
 /** a dog and the lidar mounted on it, each a module in its own namespace, as their tf has them */
-function robotTf(): TfTree {
-    const tf = new TfTree()
+function robotTf(): TfGraph {
+    const tf = new TfGraph()
     tf.set("world", "go2/base_link", [1, 0, 0], identity)
     tf.set("go2/base_link", "go2/lidar/base_link", [0, 0, 0.3], identity)
     return tf
@@ -192,7 +201,10 @@ Deno.test("tf frames find the modules: hardware.usda asked once per namespace, a
         assertEquals(usdRequests(requests).map((request) => request.namespace).sort(), ["", "go2", "go2/lidar"], "every prefix of every frame, each once")
         assertEquals(usdRequests(requests).every((request) => request.info.sha256 === undefined && request.info.content === undefined), true, "nothing cached yet: plain header requests")
         assertEquals([...source.state.get().modules.keys()].sort(), ["go2", "go2/lidar"], "the top level never answered, so it has no module")
-        assertEquals(source.state.get().modules.get("go2")?.description?.links.map((link) => link.name), ["go2/base_link"], "links by their tf names")
+        assertEquals(source.state.get().modules.get("go2")?.description?.links.map((link) => link.name), ["go2/base_link"], "links by their prim paths, which are their tf frames, not by displayName")
+        assertEquals(tf.kindOf("go2/base_link", "go2/lidar/base_link"), "hardware", "both ends are prims of loaded USDs")
+        assertEquals(tf.kindOf("world", "go2/base_link"), "imaginary", "world is no module's prim: an estimate")
+        assert(tf.isHardwareFrame("go2/lidar"), "every prim counts, not only the rigid bodies")
         const meshRequests = requests.filter((request) => request.info.uri === MESH_NAME)
         assertEquals(meshRequests.length, 1, "one mesh both modules name: asked for once")
         assertEquals(source.state.get().modules.get("go2")?.geometries.get(MESH_NAME), source.state.get().modules.get("go2/lidar")?.geometries.get(MESH_NAME), "and decoded once")
