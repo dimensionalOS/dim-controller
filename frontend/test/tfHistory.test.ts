@@ -3,7 +3,8 @@
 import { assert, assertAlmostEquals, assertEquals } from "jsr:@std/assert@1"
 import { Vector3 } from "three"
 import type * as THREE from "three"
-import { TfTree } from "dimos-react/three"
+import type { TfTree } from "dimos-react/three"
+import { TfGraph } from "../src/core/tf.ts"
 import { TfHistory } from "../src/core/tfHistory.ts"
 import { LayerManager } from "../src/core/layers/manager.ts"
 import { FILE_INFO, LEGACY_FILE_INFO, ROBOT_DESCRIPTION } from "../src/core/urdfSource.ts"
@@ -18,7 +19,7 @@ const yaw90: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_
 
 /** tree + history fed together, the way core/tfFeed.ts does */
 function feed() {
-    const tree = new TfTree()
+    const tree = new TfGraph()
     const history = new TfHistory(tree)
     const set = (parent: string, child: string, translation: [number, number, number], rotation: [number, number, number, number], stamp: number, isStatic = false) => {
         tree.set(parent, child, translation, rotation, isStatic)
@@ -60,7 +61,7 @@ Deno.test("a stamp outside what's kept gets each edge's newest sample, and an un
     assertAlmostEquals(origin(kept).x, 3)
 })
 
-Deno.test("history is bounded per edge, keeps samples sorted, and a new parent starts the edge over", () => {
+Deno.test("history is bounded per edge, keeps samples sorted, and a second parent is an edge of its own", () => {
     const { history, set } = feed()
     for (let stamp = 0; stamp <= 10_000; stamp += 20) {
         set("odom", "base_link", [stamp / 1000, 0, 0], none, stamp)
@@ -71,9 +72,11 @@ Deno.test("history is bounded per edge, keeps samples sorted, and a new parent s
     set("odom", "base_link", [100, 0, 0], none, 7015) // late arrival, slotted in by stamp
     assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 7015)).x, 100)
     assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 9990)).x, 9.99)
+    // a second parent is a second edge, not a replacement: base_link is still placed in odom, and in map, and odom in map through it
     set("map", "base_link", [5, 0, 0], none, 11_000)
-    assertEquals(history.lookupAt("base_link", "odom", 9990), null)
+    assertAlmostEquals(origin(history.lookupAt("base_link", "odom", 9990)).x, 9.99)
     assertAlmostEquals(origin(history.lookupAt("base_link", "map", 9990)).x, 5)
+    assertAlmostEquals(origin(history.lookupAt("odom", "map", 11_000)).x, 5 - 10)
 })
 
 // ---- the point cloud layer: frozen per scan ----

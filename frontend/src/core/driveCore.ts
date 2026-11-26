@@ -24,6 +24,8 @@ export interface ViewSettings {
     robot?: string
     /** "" = the profile's, else picked from the tree */
     fixedFrame: string
+    /** which root tf is shown from (core/tf.ts): the estimates' (nav: world, map, odom) or the hardware's top prim; unset: nav */
+    tfRoot?: "nav" | "hardware"
     follow: boolean
     /** the TF frame the 3D camera follows: "" = base_link when it's in TF, else the profile's base frame */
     followFrame: string

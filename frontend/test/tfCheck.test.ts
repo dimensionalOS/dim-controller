@@ -1,19 +1,19 @@
 import { assertEquals } from "jsr:@std/assert@1"
-import { TfTree } from "dimos-react/three"
+import { TfGraph } from "../src/core/tf.ts"
 import { checkTf, confirmed, fixedFrameInUse, missingFixedFrameIssue, type TfIssue } from "../src/core/tfCheck.ts"
 
 const none: [number, number, number, number] = [0, 0, 0, 1]
 
-function check(tree: TfTree, fixedFrame: string, layers: { name: string; frame: string }[] = [], ages: Record<string, number> = {}): TfIssue[] {
-    const snapshot = tree.snapshot(fixedFrame)
+function check(tree: TfGraph, fixedFrame: string, layers: { name: string; frame: string }[] = [], ages: Record<string, number> = {}): TfIssue[] {
+    const snapshot = tree.snapshot()
     for (const edge of snapshot.edges) {
         edge.ageMs = ages[edge.child] ?? 0
     }
     return checkTf({ snapshot, fixedFrame, layers, placed: (frame) => tree.lookup(frame, fixedFrame) !== null })
 }
 
-function go2(): TfTree {
-    const tree = new TfTree()
+function go2(): TfGraph {
+    const tree = new TfGraph()
     tree.set("world", "base_link", [0, 0, 0], none, false)
     tree.set("base_link", "camera_link", [0, 0, 0], none, false)
     tree.set("camera_link", "camera_optical", [0, 0, 0], none, true)
@@ -22,7 +22,7 @@ function go2(): TfTree {
 
 Deno.test("a healthy tree, and no tf at all, have nothing to say", () => {
     assertEquals(check(go2(), "world", [{ name: "/lidar", frame: "world" }, { name: "/color_image", frame: "camera_optical" }]), [])
-    assertEquals(check(new TfTree(), "world", [{ name: "/map", frame: "map" }]), [])
+    assertEquals(check(new TfGraph(), "world", [{ name: "/map", frame: "map" }]), [])
 })
 
 Deno.test("separate trees: named by root, the fixed frame's first, flagging the frames that can't be drawn", () => {
@@ -34,18 +34,21 @@ Deno.test("separate trees: named by root, the fixed frame's first, flagging the 
     assertEquals(issue.frames, ["go2_base", "go2_odom"])
 })
 
-Deno.test("two parents and a cycle", () => {
+Deno.test("several parents are fine (one path between any two frames); a second path is a cycle", () => {
     const tree = go2()
     tree.set("odom", "base_link", [0, 0, 0], none, false)
-    const kinds = check(tree, "world").map((issue) => issue.kind)
-    assertEquals(kinds.includes("twoParents"), true)
-    const cyclic = new TfTree()
+    assertEquals(check(tree, "world"), [])
+    tree.set("world", "odom", [0, 0, 0], none, false)
+    const [first] = check(tree, "world")
+    assertEquals(first.kind, "cycle")
+    assertEquals(first.frames, ["base_link", "odom"])
+    const cyclic = new TfGraph()
     cyclic.set("world", "base_link", [0, 0, 0], none, false)
     cyclic.set("a", "b", [0, 0, 0], none, false)
     cyclic.set("b", "a", [0, 0, 0], none, false)
-    const [first] = check(cyclic, "world")
-    assertEquals(first.kind, "cycle")
-    assertEquals(first.frames, ["a", "b"])
+    const [again] = check(cyclic, "world")
+    assertEquals(again.kind, "cycle")
+    assertEquals(again.frames, ["a", "b"])
 })
 
 Deno.test("a layer whose frame isn't in the tree, or isn't connected to the fixed frame", () => {

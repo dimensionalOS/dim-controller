@@ -1,5 +1,5 @@
 // What's wrong with the live TF tree, worst first, for the view's footnote and the TF panel (the Recordings app's
-// warnings.ts checks a recording the same way): a cycle, a frame with two parents, separate trees, a fixed frame or a
+// warnings.ts checks a recording the same way): a second path between two frames (several parents alone are fine), separate trees, a fixed frame or a
 // drawn layer's frame_id with no path in the tree, and dynamic transforms that stopped while others keep coming.
 import type { TfSnapshot } from "dimos-react/three"
 
@@ -37,8 +37,8 @@ export function checkTf({ snapshot, fixedFrame, layers, placed }: TfCheckInput):
     if (cycle.length) {
         issues.push({
             kind: "cycle",
-            summary: `a cycle through ${list(cycle)}`,
-            detail: `${cycle.join(", ")} ${cycle.length === 1 ? "is its own ancestor" : "are their own ancestors"}: none of them can be placed`,
+            summary: `a second path through ${list(cycle)}`,
+            detail: `tf has two paths between ${cycle.join(", ")} (it allows one): the view uses the shorter, so the other edge is ignored`,
             frames: cycle,
         })
     }

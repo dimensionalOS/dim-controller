@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { ViewerApp } from "../core/app.ts"
 import { useStore } from "../core/store.ts"
-import type { TfSnapshot } from "dimos-react/three"
+import type { TfGraphSnapshot as TfSnapshot } from "../core/tf.ts"
 import { Field, Select } from "dimos-react"
 
 function Tree({ app, snapshot, frame, depth, chain = false, seen, hovered, flagged }: { app: ViewerApp; snapshot: TfSnapshot; frame: string; depth: number; chain?: boolean; seen: Set<string>; hovered: string | null; flagged: Set<string> }) {
@@ -24,6 +24,7 @@ function Tree({ app, snapshot, frame, depth, chain = false, seen, hovered, flagg
                 onPointerLeave={() => app.highlight.set(null)}
             >
                 <span className="tf-name">{chain ? "↳ " : ""}{frame}</span>
+                {edge && <span className="tf-age" title={edge.kind === "hardware" ? "hardware: both frames are prims of a module's hardware.usda" : "imaginary: an estimate (not both frames in a provided USD)"}>{edge.kind === "hardware" ? "hw" : "est"}{edge.flipped ? " ↑" : ""}</span>}
                 {edge && <span className="tf-age">{edge.isStatic ? "static" : `${Math.round(edge.ageMs)} ms`}</span>}
             </div>
             {/* an only child stays at its parent's indent (a chain like link1 → link7 reads down, not off the panel's edge) */}
@@ -60,6 +61,9 @@ export function TfPanel({ app }: { app: ViewerApp }) {
         <div className="tf-panel">
             <Field inline label="Fixed frame" title="everything is drawn relative to this frame">
                 <Select value={view.fixedFrame} options={[["", `auto (${frameInfo.fixedFrame})`], ...(view.fixedFrame && !snapshot.frames.includes(view.fixedFrame) ? [[view.fixedFrame, `${view.fixedFrame} (not in TF: drawing in ${frameInfo.fixedFrame})`] as [string, string]] : []), ...snapshot.frames.map((frame) => [frame, frame] as [string, string])]} onChange={(fixedFrame) => app.settings.update({ fixedFrame })} />
+            </Field>
+            <Field inline label="Root" title="which root the tree hangs from (and auto's fixed frame): the estimates' (nav) or the hardware's top prim">
+                <Select value={view.tfRoot ?? "nav"} options={[["nav", `nav (${app.tf.navRoot()})`], ["hardware", `hardware (${app.tf.hardwareRoot() ?? "no hardware.usda yet"})`]]} onChange={(tfRoot) => app.settings.update({ tfRoot: tfRoot as "nav" | "hardware" })} />
             </Field>
             <p className="hint">A frame on the robot (a camera, {app.robotFrame}) is followed instead (Settings → Follow frame), so the world stays level</p>
             <p className="hint">Robot frame: {app.profile.baseFrame} {frameInfo.robotFound ? "(in TF)" : "(not in TF yet)"}</p>

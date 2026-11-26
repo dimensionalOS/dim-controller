@@ -1,7 +1,8 @@
 // Wires the 3D page together (no React) on top of the drive core (core/driveCore.ts): TF, the 3D view, layers, camera streams.
 // The UI reads the stores; window.__lv exposes this for tests.
 import * as THREE from "three"
-import { TfTree } from "dimos-react/three"
+import { TfGraph } from "./tf.ts"
+import { hardwareSource } from "./hardwareFiles.ts"
 import { feedTf } from "./tfFeed.ts"
 import { TfHistory } from "./tfHistory.ts"
 import { checkTf, confirmed, fixedFrameInUse, missingFixedFrameIssue, type TfIssue } from "./tfCheck.ts"
@@ -34,7 +35,8 @@ export type { ViewSettings }
 
 export class ViewerApp {
     readonly connection: Connection
-    readonly tf = new TfTree()
+    /** tf as a graph (several parents, one path), shown from the nav or the hardware root (core/tf.ts) */
+    readonly tf = new TfGraph()
     /** a few seconds of tf, so clouds are placed as of when they were seen */
     readonly tfHistory = new TfHistory(this.tf)
     readonly viewer: Viewer
@@ -131,6 +133,20 @@ export class ViewerApp {
         }
         applyCameras()
         this.settings.subscribe(applyCameras)
+        // the TF root: the hardware root needs the modules' hardware.usda files, so they're loaded while it's picked
+        let releaseHardware: (() => void) | null = null
+        const applyTfRoot = () => {
+            const root = this.settings.get().tfRoot === "hardware" ? "hardware" : "nav"
+            this.tf.root = root
+            if (root === "hardware" && !releaseHardware) {
+                releaseHardware = hardwareSource(this.connection, this.tf).acquire()
+            } else if (root === "nav" && releaseHardware) {
+                releaseHardware()
+                releaseHardware = null
+            }
+        }
+        applyTfRoot()
+        this.settings.subscribe(applyTfRoot)
         // globalThis.__dim: read the live scene graph when a render looks wrong (core/debugHook.ts)
         installDebugHook(this)
     }
@@ -153,7 +169,9 @@ export class ViewerApp {
             // a frame on the robot as the fixed frame tilts and turns the whole world with it: follow it instead
             this.settings.update({ fixedFrame: "", followFrame: picked, follow: true })
         }
-        const { frame: fixedFrame, missing } = fixedFrameInUse(this.settings.get().fixedFrame, this.profile.fixedFrame, (frame) => this.tf.has(frame), () => this.tf.defaultFixedFrame())
+        // from the hardware root the profile's world-ish frame gives way to the hardware's top prim
+        const profileFrame = this.tf.root === "hardware" ? "" : this.profile.fixedFrame
+        const { frame: fixedFrame, missing } = fixedFrameInUse(this.settings.get().fixedFrame, profileFrame, (frame) => this.tf.has(frame), () => this.tf.defaultFixedFrame())
         this.#missingFixedFrame = missing
         if (fixedFrame !== this.viewer.fixedFrame) {
             this.viewer.fixedFrame = fixedFrame
