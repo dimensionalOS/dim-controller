@@ -133,10 +133,10 @@ class HardwareModelLayer {
         const cameras: NonNullable<HardwareModule["description"]>["cameras"] & object = []
         const lighting: Required<Pick<SceneLighting, "lights">> & SceneLighting = { lights: [], textures }
         for (const { module, kinematics, model } of this.#drawn.values()) {
-            const poses = modulePoses(kinematics, (name) => tf.lookup(name, frame.fixedFrame))
+            const poses = modulePoses(kinematics, (name) => tf.lookup(name, frame.fixedFrame), module.namedFrames)
             model.root.visible = !!poses
             if (!poses) {
-                unplaced.push(moduleFrame(kinematics.root))
+                unplaced.push(moduleFrame(kinematics.root, module.namedFrames))
                 continue
             }
             const { lights, look } = module.description!

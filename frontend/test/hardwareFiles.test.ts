@@ -405,3 +405,45 @@ Deno.test("a USD naming a sublayer: the sublayer is asked for, and the USD read 
         release()
     })
 })
+
+Deno.test("a module naming a frame (DimosFramesAPI): that link is looked up by its named tf frame, an unnamed one by its prim path", async () => {
+    await withCache(new IDBFactory(), async () => {
+        const named = new TextEncoder().encode(`#usda 1.0
+(
+    defaultPrim = "arm"
+)
+def Xform "left"
+{
+    def Xform "arm" (
+        prepend apiSchemas = ["DimosFramesAPI"]
+    )
+    {
+        string dimos:namespace = "left"
+        rel dimos:frame:left:cuff = </left/arm/wrist>
+        def Xform "wrist" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+        }
+    }
+}
+`)
+        const { connection } = await bus({ "left": new Map([[HARDWARE_USD, named]]) })
+        const tf = new TfGraph()
+        tf.set("world", "left/arm", [1, 0, 0], identity)
+        tf.set("left/arm", "left/cuff", [0, 0, 0.5], identity)
+        const source = new HardwareSource(connection, tf)
+        const release = source.acquire()
+        await until(() => !!source.state.get().modules.get("left")?.description)
+        const module = source.state.get().modules.get("left")!
+        assertEquals(moduleFrame("left/arm/wrist", module.namedFrames), "left/cuff", "the named prim is its rel's tf frame")
+        assertEquals(moduleFrame("left/arm", module.namedFrames), "left/arm", "an unnamed prim is its prim path")
+        assert(module.frames.includes("left/cuff") && !module.frames.includes("left/arm/wrist"), "tf's hardware frames are the named ones")
+        assert(tf.isHardwareFrame("left/cuff"))
+        const links = module.description!.links.map((link) => link.name)
+        const kinematics = new Kinematics({ name: "arm", base_link: "left/arm", base_frame: "left/arm", base_pose: { xyz: [0, 0, 0], quat: [0, 0, 0, 1] }, joint_names: [], joints: [], links: links.map((name) => ({ name, visuals: [], collisions: [] })) })
+        const poses = modulePoses(kinematics, (frame) => tf.lookup(frame, "world"), module.namedFrames)!
+        assertEquals(new THREE.Vector3().setFromMatrixPosition(poses.get("left/arm/wrist")!).toArray(), [1, 0, 0.5], "the wrist drawn at left/cuff")
+        release()
+    })
+})

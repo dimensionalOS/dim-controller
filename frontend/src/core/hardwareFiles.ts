@@ -7,7 +7,7 @@ import { Store } from "./store.ts"
 import { type Connection, dimosKey, Priority, type Publisher } from "./transport.ts"
 import { decodeFileInfo, encodeFileInfo, FILE_INFO_TYPE, type FileInfo } from "./fileInfo.ts"
 import { cachedBytes, knownHash, rememberHash, storeBytes } from "./hardwareCache.ts"
-import { framesFromPrimPaths, usdAssetHashes, usdParser, usdPrimPaths } from "./usd.ts"
+import { framesFromPrimPaths, usdAssetHashes, usdNamedFrames, usdParser, usdPrimPaths } from "./usd.ts"
 import { imageTexture, isImage } from "./imageTexture.ts"
 import { meshLog } from "./meshCache.ts"
 import { stripFrame } from "./namespace.ts"
@@ -36,12 +36,12 @@ export function framePrefixes(frame: string): string[] {
     return parts.map((_, index) => parts.slice(0, parts.length - index).join("/")).concat("")
 }
 
-/** a link's tf frame: its prim path (framesFromPrimPaths), the page's own namespace off as it is off tf's */
-export const moduleFrame = (link: string) => stripFrame(link)
+/** a link's tf frame: the one its module names it by (usdNamedFrames), else its prim path (framesFromPrimPaths), the page's own namespace off as it is off tf's */
+export const moduleFrame = (link: string, named?: ReadonlyMap<string, string>) => stripFrame(named?.get(link) ?? link)
 
 /** Every link of a module's USD in the fixed frame: at its own tf frame, else its root's through the joints; null while tf has no root frame. */
-export function modulePoses(kinematics: Kinematics, inFixed: (frame: string) => THREE.Matrix4 | null): Map<string, THREE.Matrix4> | null {
-    const at = (link: string) => inFixed(moduleFrame(link))
+export function modulePoses(kinematics: Kinematics, inFixed: (frame: string) => THREE.Matrix4 | null, named?: ReadonlyMap<string, string>): Map<string, THREE.Matrix4> | null {
+    const at = (link: string) => inFixed(moduleFrame(link, named))
     const rootPose = at(kinematics.root)
     if (!rootPose) {
         return null
@@ -70,7 +70,9 @@ export interface HardwareModule {
     files: string[]
     /** files the module names but answered it can't serve (a header with no sha256) */
     unservable: Set<string>
-    /** every prim of its USD as a tf frame (its prim path): the frames tf calls hardware (core/tf.ts) */
+    /** prim path → the tf frame its USD names it by (dimos:frame:* rels); a prim not in it is its path */
+    namedFrames: Map<string, string>
+    /** every prim of its USD as a tf frame (named, else its prim path): the frames tf calls hardware (core/tf.ts) */
     frames: string[]
     /** its hardware.usda's text, and the sublayers it names (as authored) with those that have come in */
     source: string
@@ -89,7 +91,7 @@ const splitName = (key: string) => {
     const at = key.indexOf("\n")
     return { namespace: key.slice(0, at), uri: key.slice(at + 1) }
 }
-const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), frames: [], problem, source: "", layers: new Map() })
+const blank = (namespace: string, sha256: string | null, problem: string | null = null): HardwareModule => ({ namespace, sha256, description: null, geometries: new Map(), textures: new Map(), files: [], unservable: new Set(), namedFrames: new Map(), frames: [], problem, source: "", layers: new Map() })
 
 export class HardwareSource {
     readonly state = new Store<HardwareState>({ modules: new Map(), version: 0 })
@@ -330,7 +332,8 @@ export class HardwareSource {
         const sublayers = [text, ...layers.values()].flatMap((layer) => parser.usdaSublayers?.(layer) ?? [])
         const missing = [...new Set(sublayers)].filter((path) => !layers.has(path))
         const hashes = usdAssetHashes(text, parser)
-        const module: HardwareModule = { ...base, description, files: [...meshUris(description), ...missing], frames: usdPrimPaths([text, ...layers.values()]).map(moduleFrame), geometries: base.geometries, textures: base.textures }
+        const namedFrames = usdNamedFrames([text, ...layers.values()])
+        const module: HardwareModule = { ...base, description, files: [...meshUris(description), ...missing], namedFrames, frames: usdPrimPaths([text, ...layers.values()]).map((path) => moduleFrame(path, namedFrames)), geometries: base.geometries, textures: base.textures }
         this.#setModule(module)
         meshLog(`hardware ${namespace || "(top level)"}: ${module.files.length} files, ${module.files.filter((uri) => hashes.has(uri)).length} hashed`)
         module.files.forEach((uri) => this.#wantAsset(module, uri, hashes.get(uri) ?? null))

@@ -86,6 +86,8 @@ interface PrimNode {
     name: string
     displayName?: string
     meta: Record<string, string>
+    /** its body's attributes and relationships, keyed without their type (`rel dimos:frame:a:b` is `dimos:frame:a:b`) */
+    attrs?: Record<string, string>
     children: PrimNode[]
 }
 
@@ -111,6 +113,32 @@ export function usdPrimPaths(text: string | readonly string[]): string[] {
         eachPrim(parsePrims(layer), (_, path) => paths.add(path))
     }
     return [...paths]
+}
+
+/** the relationships a module's top prim (DimosFramesAPI) names its frames by: `rel dimos:frame:left:cuff = </left/arm/wrist>` */
+const FRAME_REL = "dimos:frame:"
+
+/**
+ * Each prim a module names a tf frame for, by its path in tf's spelling, to that frame: `rel dimos:frame:left:cuff =
+ * </left/arm/wrist>` is left/arm/wrist → left/cuff. A prim it doesn't name is its path (absent here); empty when this
+ * dimos-react can't list prims.
+ */
+export function usdNamedFrames(text: string | readonly string[]): Map<string, string> {
+    const named = new Map<string, string>()
+    if (!parsePrims) {
+        return named
+    }
+    for (const layer of [text].flat()) {
+        eachPrim(parsePrims(layer), (prim) => {
+            for (const [key, value] of Object.entries(prim.attrs ?? {})) {
+                const target = value.match(/<\/?([^>]+)>/)?.[1]
+                if (key.startsWith(FRAME_REL) && target) {
+                    named.set(target, key.slice(FRAME_REL.length).replaceAll(":", "/"))
+                }
+            }
+        })
+    }
+    return named
 }
 
 /**
