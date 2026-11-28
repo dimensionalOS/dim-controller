@@ -277,7 +277,7 @@ export class ViewerApp {
         }
         // a robot with its own URDF, or a HardwareModule's USD (layers/hardwareModel.tsx), is drawn by that alone, never with the box over it
         const urdf = urdfSource(this.connection).state.get()
-        const hardware = this.tf.isHardwareFrame(this.profile.baseFrame)
+        const hardware = this.tf.hasHardwareFrameNamed(this.profile.baseFrame)
         const visible = !!robot && this.settings.get().robotModel !== false && !urdf.description && !urdf.drawing && !urdf.armDraws && !hardware
         if (visible && !group.matrix.equals(robot)) {
             group.matrix.copy(robot)

@@ -169,6 +169,11 @@ export class TfGraph extends TfTree {
         return this.#hardwareFrames.has(frame)
     }
 
+    /** Whether some HardwareModule's USD has a frame called `name`, under any namespace (`main/base_link` for base_link). */
+    hasHardwareFrameNamed(name: string): boolean {
+        return this.#hardwareFrames.has(name) || [...this.#hardwareFrames].some((frame) => frame.endsWith(`/${name}`))
+    }
+
     /** hardware when both of its frames are prims of provided hardware.usda files, else imaginary (an estimate) */
     kindOf(parent: string, child: string): TfEdgeKind {
         return this.#hardwareFrames.has(parent) && this.#hardwareFrames.has(child) ? "hardware" : "imaginary"
