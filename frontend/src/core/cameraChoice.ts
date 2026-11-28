@@ -17,6 +17,14 @@ export function pickDefault(preferred: string[], topics: Topic[], exclude: Set<s
     return images.find((topic) => !isDepthTopic(topic)) ?? images[0] ?? null
 }
 
+/**
+ * The same camera under another image type (/color_image as Image when CompressedImage shows nothing) not yet tried
+ * since a picture last showed, for a panel whose topic stays dark; null when there's none left to try.
+ */
+export function darkTwin(topic: Topic, topics: Topic[], tried: Set<string>): Topic | null {
+    return topics.find((other) => isImage(other) && other.name === topic.name && other.key !== topic.key && !tried.has(other.key)) ?? null
+}
+
 export interface CameraChoice {
     id: number
     /** the topic key shown */

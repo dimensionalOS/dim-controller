@@ -9,7 +9,7 @@ import type { ViewerApp } from "../core/app.ts"
 import { persistentStore, useStore } from "../core/store.ts"
 import { parseKey, type Topic } from "../core/transport.ts"
 import { type DepthImage, isDepthTopic, pageVisibility, panelStreams, RESUBSCRIBE_MS, STALL_MS } from "../core/video.ts"
-import { cameraTabs, isImage, pickDefault as pickPreferred, retargetPanels } from "../core/cameraChoice.ts"
+import { cameraTabs, darkTwin, isImage, pickDefault as pickPreferred, retargetPanels } from "../core/cameraChoice.ts"
 import { overlayTypeFor } from "../core/layers/registry.ts"
 import { decode } from "../core/lcm/lcm.ts"
 import { DEFAULT_DEPTH_LOOK, DEPTH_COLORMAPS, DepthCanvas, type DepthLook } from "../core/render/depth.ts"
@@ -229,6 +229,10 @@ function CameraPanel({ app, panel, topics, onChange }: {
     stallMs.current = (cameraStallS ?? STALL_MS / 1000) * 1000
     const resubscribeMs = useRef(RESUBSCRIBE_MS)
     resubscribeMs.current = (cameraReconnectS ?? RESUBSCRIBE_MS / 1000) * 1000
+    // the topic's other image types tried while it stayed dark (cleared once a picture shows), and what switching needs now
+    const darkKeys = useRef(new Set<string>())
+    const twinSwitch = useRef({ topics, panel, onChange })
+    twinSwitch.current = { topics, panel, onChange }
 
     // the stream (shared with a 3D projection of the same topic), only while the panel is open
     useEffect(() => {
@@ -332,8 +336,18 @@ function CameraPanel({ app, panel, topics, onChange }: {
             if (lastPaint.current > retriedAt) {
                 retryEvery = resubscribeMs.current
                 setReconnecting(false)
+                darkKeys.current.clear()
             }
             if (now - lastPaint.current > resubscribeMs.current && now - retriedAt > retryEvery && !document.hidden && !pausedRef.current) {
+                // a dark topic the viewer didn't pick gives way to the same camera under another type (Image vs CompressedImage)
+                const { topics: current, panel: shown, onChange: change } = twinSwitch.current
+                const twin = shown.picked === topic.key ? null : darkTwin(topic, current, darkKeys.current)
+                if (twin) {
+                    darkKeys.current.add(topic.key)
+                    console.warn(`[cameras] ${topic.name}: no picture as ${topic.type} for ${((now - lastPaint.current) / 1000).toFixed(1)} s; trying ${twin.type}`)
+                    change({ key: twin.key })
+                    return
+                }
                 retriedAt = now
                 retryEvery = Math.min(retryEvery * 2, 10 * resubscribeMs.current)
                 setReconnecting(true)

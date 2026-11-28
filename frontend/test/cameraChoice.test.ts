@@ -1,6 +1,6 @@
 // A saved camera panel follows the bus: off-bus topics move to the default camera, the viewer's pick comes back.
 import { assertEquals } from "jsr:@std/assert@1"
-import { cameraTabs, pickDefault, retargetPanels } from "../src/core/cameraChoice.ts"
+import { cameraTabs, darkTwin, pickDefault, retargetPanels } from "../src/core/cameraChoice.ts"
 
 const color = { key: "dimos/color_image/sensor_msgs.Image", name: "/color_image", type: "sensor_msgs.Image" }
 const compressed = { key: "dimos/image/sensor_msgs.CompressedImage", name: "/image", type: "sensor_msgs.CompressedImage" }
@@ -55,4 +55,12 @@ Deno.test("cameraTabs: every image topic, by type not name, labeled without the 
 Deno.test("cameraTabs: one name under two image types is told apart by type", () => {
     const twin = { key: "dimos/color_image/sensor_msgs.CompressedImage", name: "/color_image", type: "sensor_msgs.CompressedImage" }
     assertEquals(cameraTabs([color, twin]).map((tab) => tab.label), ["color_image (CompressedImage)", "color_image (Image)"])
+})
+
+Deno.test("a dark /color_image CompressedImage gives way to the /color_image Image that has data (the G1 sim's raw camera)", () => {
+    const colorCompressed = { key: "dimos/color_image/sensor_msgs.CompressedImage", name: "/color_image", type: "sensor_msgs.CompressedImage" }
+    assertEquals(darkTwin(colorCompressed, [lidar, colorCompressed, color, depth], new Set()), color)
+    // once that one was tried too, there's nothing left to switch to (the panel resubscribes as before)
+    assertEquals(darkTwin(color, [colorCompressed, color], new Set([colorCompressed.key])), null)
+    assertEquals(darkTwin(compressed, [compressed, color], new Set()), null)
 })
