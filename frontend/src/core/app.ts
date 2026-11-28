@@ -1,7 +1,7 @@
 // Wires the 3D page together (no React) on top of the drive core (core/driveCore.ts): TF, the 3D view, layers, camera streams.
 // The UI reads the stores; window.__lv exposes this for tests.
 import * as THREE from "three"
-import { TfGraph } from "./tf.ts"
+import { followedFrame, TfGraph } from "./tf.ts"
 import { hardwareSource } from "./hardwareFiles.ts"
 import { feedTf } from "./tfFeed.ts"
 import { TfHistory } from "./tfHistory.ts"
@@ -207,12 +207,12 @@ export class ViewerApp {
 
     /** the TF frame the 3D camera follows (Settings → Follow frame; by default the robot's) */
     get followFrame(): string {
-        return this.settings.get().followFrame || this.robotFrame
+        return followedFrame(this.settings.get().followFrame, this.robotFrame, this.tf)
     }
 
-    /** the robot's frame: base_link when it's in TF, else the profile's base frame */
+    /** the robot's frame: base_link when it's in TF (under a namespace too: main/base_link), else the profile's base frame */
     get robotFrame(): string {
-        return this.tf.has("base_link") ? "base_link" : this.profile.baseFrame
+        return this.tf.resolve("base_link") ?? this.profile.baseFrame
     }
 
     /** Following with Follow turns on: turns the camera about the followed point with the frame's (smoothed) heading. */

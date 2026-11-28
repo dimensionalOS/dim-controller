@@ -195,6 +195,15 @@ export class TfGraph extends TfTree {
         return this.#adjacent.has(frame)
     }
 
+    /** `name` as tf has it: itself, else the one frame that is it under a namespace (`main/base_link` for base_link); null when neither */
+    resolve(name: string): string | null {
+        if (!name || this.#adjacent.has(name)) {
+            return name || null
+        }
+        const namespaced = [...this.#adjacent.keys()].filter((frame) => frame.endsWith(`/${name}`))
+        return namespaced.length === 1 ? namespaced[0] : null
+    }
+
     /** The parent of `frame` in the tree rooted as `root` says, or null for a root / unknown frame. */
     override parentOf(frame: string): string | null {
         return this.#rooted().nodes.get(frame)?.parent ?? null
@@ -511,4 +520,9 @@ function sampleAt(samples: Sample[], stamp: number): Matrix4 {
     const before = samples[low], after = samples[high]
     const fraction = (stamp - before.stamp) / (after.stamp - before.stamp)
     return out.compose(before.translation.clone().lerp(after.translation, fraction), before.rotation.clone().slerp(after.rotation, fraction), unitScale)
+}
+
+/** The frame the 3D view follows: the picked one as tf has it, else the robot's (a pick tf doesn't have, as another robot's front_camera, isn't waited on forever). */
+export function followedFrame(picked: string, robotFrame: string, tf: Pick<TfGraph, "resolve">): string {
+    return (picked && tf.resolve(picked)) || robotFrame
 }

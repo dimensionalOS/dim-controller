@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "jsr:@std/assert@1"
 import { Vector3 } from "three"
-import { TfGraph } from "../src/core/tf.ts"
+import { followedFrame, TfGraph } from "../src/core/tf.ts"
 import { isTreeTopic } from "../src/core/tfFeed.ts"
 
 const yaw90: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2]
@@ -154,4 +154,19 @@ Deno.test("lookupAt follows the graph and interpolates each edge, walked either 
     assertAlmostEquals(halfway.x, 1)
     const back = new Vector3().applyMatrix4(tree.lookupAt("odom", "robot", 1100)!)
     assertAlmostEquals(back.x, -2)
+})
+
+Deno.test("follow: base_link finds a namespaced main/base_link, and a picked frame tf doesn't have follows the robot instead", () => {
+    const tree = new TfGraph()
+    tree.set("office_555", "main", [0, 0, 0], none, true)
+    tree.set("main", "main/odom", [0, 0, 0], none, true)
+    tree.set("main/odom", "main/base_link", [1, 2, 0], none, false)
+    assertEquals(tree.resolve("base_link"), "main/base_link")
+    assertEquals(tree.resolve("main/odom"), "main/odom")
+    assertEquals(tree.resolve("front_camera"), null)
+    assertEquals(followedFrame("front_camera", "main/base_link", tree), "main/base_link")
+    assertEquals(followedFrame("base_link", "main/base_link", tree), "main/base_link")
+    assertEquals(followedFrame("main/odom", "main/base_link", tree), "main/odom")
+    tree.set("left", "left/base_link", [0, 0, 0], none, true)
+    assertEquals(tree.resolve("base_link"), null, "two robots' base_link: neither is picked")
 })

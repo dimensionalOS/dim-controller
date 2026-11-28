@@ -483,7 +483,8 @@ class MapSource {
 
     /** the followed frame's height in the fixed frame, or null without TF */
     #robotZ(): number | null {
-        const placed = this.app.tf.lookup(mapLayout.get().followFrame, this.app.viewer.fixedFrame)
+        const frame = this.app.tf.resolve(mapLayout.get().followFrame)
+        const placed = frame ? this.app.tf.lookup(frame, this.app.viewer.fixedFrame) : null
         return placed ? placed.elements[14] : null
     }
 
@@ -636,8 +637,9 @@ class MapRenderer {
     }
 
     #lookupTarget(): { x: number; y: number } | null {
-        const placed = this.app.tf.lookup(this.#follow.frame, this.app.viewer.fixedFrame)
-        return placed && this.app.tf.has(this.#follow.frame) ? floorPose(placed.elements) : null
+        const frame = this.app.tf.resolve(this.#follow.frame)
+        const placed = frame ? this.app.tf.lookup(frame, this.app.viewer.fixedFrame) : null
+        return placed ? floorPose(placed.elements) : null
     }
 
     /** the base map and the costmap over it (null: none); a source that didn't change keeps its data */
