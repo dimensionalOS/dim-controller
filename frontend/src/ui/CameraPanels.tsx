@@ -231,8 +231,8 @@ function CameraPanel({ app, panel, topics, onChange }: {
     resubscribeMs.current = (cameraReconnectS ?? RESUBSCRIBE_MS / 1000) * 1000
     // the topic's other image types tried while it stayed dark (cleared once a picture shows), and what switching needs now
     const darkKeys = useRef(new Set<string>())
-    const twinSwitch = useRef({ topics, panel, onChange })
-    twinSwitch.current = { topics, panel, onChange }
+    const twinSwitch = useRef({ topics, onChange })
+    twinSwitch.current = { topics, onChange }
 
     // the stream (shared with a 3D projection of the same topic), only while the panel is open
     useEffect(() => {
@@ -339,9 +339,9 @@ function CameraPanel({ app, panel, topics, onChange }: {
                 darkKeys.current.clear()
             }
             if (now - lastPaint.current > resubscribeMs.current && now - retriedAt > retryEvery && !document.hidden && !pausedRef.current) {
-                // a dark topic the viewer didn't pick gives way to the same camera under another type (Image vs CompressedImage)
-                const { topics: current, panel: shown, onChange: change } = twinSwitch.current
-                const twin = shown.picked === topic.key ? null : darkTwin(topic, current, darkKeys.current)
+                // a dark topic gives way to the same camera under another type (Image vs CompressedImage); the pick comes back when it's live again
+                const { topics: current, onChange: change } = twinSwitch.current
+                const twin = darkTwin(topic, current, darkKeys.current)
                 if (twin) {
                     darkKeys.current.add(topic.key)
                     console.warn(`[cameras] ${topic.name}: no picture as ${topic.type} for ${((now - lastPaint.current) / 1000).toFixed(1)} s; trying ${twin.type}`)
